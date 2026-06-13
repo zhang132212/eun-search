@@ -20,12 +20,16 @@ bot/    — Mineflayer 机器人 + 看门狗
 - `/botSearchAll` / `/botSearchChest` — 触发 bot 取物
 - `/botStop` — 停止指定 bot
 
-## Bot 使用
+## 部署
 
+### 服务端
+1. 将 `mod/build/libs/eun_search-*.jar` 放入服务端 `mods/` 目录
+2. 启动服务端
+3. 在游戏内执行 `/scanTcp <标签> <端口>` 注册 TCP 端口
+
+### Bot
 ```bash
 cd bot
-npm install
-node watchdog_direct.js
+双击 start.bat
 ```
-
-按提示填写配置，启动后自动连接到服务端 TCP 端口。
+按提示填写配置（TCP端口、账号、坐标），启动后自动连接服务端。
