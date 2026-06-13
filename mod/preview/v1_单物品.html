@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#fff;font-family:'Microsoft YaHei',sans-serif;display:flex;justify-content:center;padding:40px}
+.card{width:600px;background:#fff;border:2px solid #e0e0e0;border-radius:16px;overflow:hidden}
+.header{background:#3b82f6;color:#fff;text-align:center;padding:18px;font-size:26px;font-weight:bold;letter-spacing:4px}
+.body{padding:24px 32px}
+.item-block{display:flex;align-items:center;gap:16px;padding:20px;background:#f8fafc;border-radius:12px}
+.icon{width:56px;height:56px;image-rendering:pixelated;border-radius:6px;flex-shrink:0}
+.info{flex:1;min-width:0}
+.name{font-size:20px;font-weight:600;color:#1e293b;margin-bottom:6px}
+.count{font-size:14px;color:#64748b;margin-bottom:10px}
+.bar-wrap{height:22px;background:#e2e8f0;border-radius:11px;overflow:hidden;position:relative}
+.bar-fill{height:100%;background:linear-gradient(90deg,#22c55e,#16a34a);border-radius:11px;transition:width .3s}
+.bar-text{position:absolute;top:0;left:50%;transform:translateX(-50%);line-height:22px;font-size:12px;color:#fff;font-weight:600;text-shadow:0 0 4px rgba(0,0,0,.4)}
+.footer{text-align:center;padding:12px 32px 24px;color:#94a3b8;font-size:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">📦 物品容量</div>
+  <div class="body">
+    <div class="item-block">
+      <img class="icon" src="https://assets.mcassets.cloud/1.21.1/icons/items/carrot.png" alt="胡萝卜" onerror="this.style.display='none'">
+      <div class="info">
+        <div class="name">🥕 胡萝卜</div>
+        <div class="count">数量: 3,840 个 (2盒+384) &nbsp;|&nbsp; 占用 60 格 / 3,240 格</div>
+        <div class="bar-wrap">
+          <div class="bar-fill" style="width:1.85%"></div>
+          <div class="bar-text">1.85%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer">QQScan &bull; 扫描耗时 0.8s &bull; 容器 120个</div>
+</div>
+</body>
+</html>

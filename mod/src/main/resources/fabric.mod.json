@@ -1,0 +1,26 @@
+{
+    "schemaVersion": 1,
+    "id": "eun_search",
+    "version": "${version}",
+    "name": "EunSearch",
+    "description": "容器物品扫描与Bot联动",
+    "authors": ["User"],
+    "contact": {},
+    "license": "MIT",
+    "icon": "assets/eun_search/icon.png",
+    "environment": "server",
+    "entrypoints": {
+        "server": [
+            "com.eunsearch.EunSearchMod"
+        ]
+    },
+    "mixins": [
+        "eun_search.mixins.json"
+    ],
+    "depends": {
+        "fabricloader": ">=0.16.9",
+        "minecraft": "~1.21.11",
+        "java": ">=21",
+        "fabric-api": ">=0.141.3"
+    }
+}

@@ -1,0 +1,7 @@
+node_modules/
+.gradle/
+build/
+*.jar
+bot_config.json
+bot_heartbeat.json
+*.log
