@@ -32,4 +32,66 @@ bot/    — Mineflayer 机器人 + 看门狗
 cd bot
 双击 start.bat
 ```
-按提示填写配置（TCP端口、账号、坐标），启动后自动连接服务端。
+ 按提示填写配置（TCP端口、账号、坐标），启动后自动连接服务端。
+
+## Bot-Mod 联动流程
+
+```
+ 玩家输入 /botSearchChest "仓库" 橡木原木 1728
+          │
+          ▼
+  ScanCommand 广播到匹配的 TCP 端口
+          │
+          ▼  TCP ──── BotTCPServer ──── EunSearchAPI ──── RegionScanner
+          │                                                  │
+          │                                              读取 .mca 文件
+          │                                              扫描所有容器
+          │                                              合并双箱槽位
+          │                                                  │
+          │                                                  ▼
+          │                                              返回 ScanResult
+          │                                                  │
+          │                                                  ▼
+          ▼  TCP ◄────  {containers:[{x,y,z,type,shulkerSlots,
+  Bot 收到仓库数据                     isDoubleChest,partnerX,partnerZ}]}
+          │
+          ▼
+   planContainers()  按散装量降序排列容器路线
+          │
+          ▼
+  ┌─ processOneContainer() 遍历
+  │    │
+  │    ├─ findStandPos()  找可站立位置
+  │    ├─ getPathTo()     预判路径可达性
+  │    ├─ nav()           导航到容器旁
+  │    ├─ openContainer() 打开箱子
+  │    │
+  │    ├─ 散装物品 → withdraw() 取出
+  │    │
+  │    └─ 盒装物品（按槽位）:
+  │         ├─ clickWindow(slot,0,1) 取出潜影盒
+  │         ├─ 槽位不匹配 → rescan 重新扫描
+  │         │
+  │         └─ processShulkerBox():
+  │               ├─ nav() 到放置点
+  │               ├─ placeBlock() 放盒子
+  │               ├─ openContainer() 打开盒子
+  │               ├─ withdraw() 取出目标物品
+  │               ├─ dig() 挖掘盒子 → 捡回
+  │               └─ toss() 丢到丢弃点
+  │
+  ├─ 容器取完 → 下一个容器
+  │
+  └─ 全部取完
+          │
+          ▼
+   deliverItems()
+          │
+          ├─ /player <玩家> spawn  召唤假人
+          ├─ openContainer(假人)   打开背包
+          ├─ deposit()             转交物品
+          └─ /player <玩家> kill   移除假人
+          │
+          ▼
+   goIdle()  回到待命点
+```
