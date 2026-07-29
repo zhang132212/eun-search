@@ -1,6 +1,6 @@
 # EunSearch Mod
 
-Minecraft 1.21.11 Fabric 容器物品扫描模组，配合 Mineflayer bot 实现自动取物。
+Minecraft 26.2 Fabric 容器物品扫描模组，配合 Mineflayer bot 实现自动取物。
 
 ## 功能
 
@@ -38,7 +38,7 @@ Minecraft 1.21.11 Fabric 容器物品扫描模组，配合 Mineflayer bot 实现
 ## 构建
 
 ```bash
-gradle build
+./gradlew build
 ```
 
 产物 `build/libs/eun_search-*.jar` 放入服务端 `mods/`。
@@ -69,7 +69,7 @@ gradle build
 
 | 组件 | 版本 |
 |------|------|
-| Minecraft | 1.21.11 |
-| Fabric Loader | 0.16.9+ |
-| Fabric API | 0.141.3+ |
-| Java | 21 |
+| Minecraft | 26.2 |
+| Fabric Loader | 0.19.3+ |
+| Fabric API | 0.156.0+26.2 |
+| Java | 25 |
