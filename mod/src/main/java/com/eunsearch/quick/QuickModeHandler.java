@@ -50,8 +50,7 @@ public class QuickModeHandler {
                     Text.literal("§e" + coords)
                             .styled(s -> s.withClickEvent(
                                     new ClickEvent.CopyToClipboard(coords)
-                            ).withColor(Formatting.YELLOW)),
-                    false
+                            ).withColor(Formatting.YELLOW))
             );
         }
         STATES.remove(player.getUuid());
@@ -120,6 +119,6 @@ public class QuickModeHandler {
     }
 
     private static void send(ServerPlayerEntity player, String msg) {
-        player.sendMessage(Text.literal(msg), false);
+        player.sendMessage(Text.literal(msg));
     }
 }

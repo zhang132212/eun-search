@@ -1,6 +1,6 @@
 # EunSearch
 
-Minecraft 1.21.11 容器物品扫描与 Bot 联动系统
+Minecraft 26.2 容器物品扫描与 Bot 联动系统
 
 ## 项目结构
 

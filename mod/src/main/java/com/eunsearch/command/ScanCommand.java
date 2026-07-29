@@ -11,7 +11,7 @@ import com.eunsearch.quick.QuickModeHandler;
 import com.eunsearch.render.ItemNameMap;
 import com.eunsearch.scan.RegionScanner;
 import net.minecraft.block.Blocks;
-import net.minecraft.entity.EntityType;
+import net.minecraft.entity.EntityTypes;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
@@ -23,6 +23,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.Identifier;
 import net.minecraft.registry.Registries;
+import net.minecraft.scoreboard.TeamColor;
 import net.minecraft.util.math.AffineTransformation;
 import org.joml.Matrix4f;
 
@@ -286,7 +287,7 @@ public class ScanCommand {
                 default -> Blocks.CHEST.getDefaultState();
             };
             if (t.contains("shulker_box")) bs = Blocks.SHULKER_BOX.getDefaultState();
-            var entity = new DisplayEntity.BlockDisplayEntity(EntityType.BLOCK_DISPLAY, world);
+            var entity = new DisplayEntity.BlockDisplayEntity(EntityTypes.BLOCK_DISPLAY, world);
             entity.setPosition(mnX, y1, mnZ);
             entity.setBlockState(bs);
             entity.setTransformation(new AffineTransformation(new Matrix4f().scale(mxX - mnX + 1, 1.0f, mxZ - mnZ + 1)));
@@ -299,7 +300,7 @@ public class ScanCommand {
             var team = sb.getTeam("eun_green");
             if (team == null) {
                 team = sb.addTeam("eun_green");
-                team.setColor(net.minecraft.util.Formatting.GREEN);
+                team.setColor(java.util.Optional.of(TeamColor.GREEN));
             }
             sb.addScoreHolderToTeam(entity.getUuidAsString(), team);
 
@@ -609,7 +610,7 @@ public class ScanCommand {
             };
             if (bid.contains("shulker_box")) bs = Blocks.SHULKER_BOX.getDefaultState();
 
-            var entity = new DisplayEntity.BlockDisplayEntity(EntityType.BLOCK_DISPLAY, world);
+            var entity = new DisplayEntity.BlockDisplayEntity(EntityTypes.BLOCK_DISPLAY, world);
             entity.setPosition(mnX, y, mnZ);
             entity.setBlockState(bs);
             entity.setTransformation(new AffineTransformation(new Matrix4f().scale(mxX - mnX + 1, 1.0f, mxZ - mnZ + 1)));
@@ -648,7 +649,7 @@ public class ScanCommand {
                                               java.util.Map<BlockPos, RegionScanner.ContainerInfo> posToInfo, String itemName) {
         // Always show container list with clickable look, detailed info only when log enabled
         boolean showDetail = LOG_ENABLED.contains(player.getUuid());
-        if (showDetail) player.sendMessage(Text.literal("§a[EunSearch] §e" + itemName + "§a 的容器详情:"), false);
+        if (showDetail) player.sendMessage(Text.literal("§a[EunSearch] §e" + itemName + "§a 的容器详情:"));
         int idx = 1;
         for (BlockPos[] g : groups) {
             int mnX = Integer.MAX_VALUE, mxX = Integer.MIN_VALUE, mnZ = Integer.MAX_VALUE, mxZ = Integer.MIN_VALUE;
@@ -688,7 +689,7 @@ public class ScanCommand {
                     .styled(s -> s.withClickEvent(new net.minecraft.text.ClickEvent.RunCommand(cmd))
                         .withHoverEvent(new net.minecraft.text.HoverEvent.ShowText(
                             Text.literal("§7点击看向容器")))));
-            player.sendMessage(text, false);
+            player.sendMessage(text);
             idx++;
         }
     }
