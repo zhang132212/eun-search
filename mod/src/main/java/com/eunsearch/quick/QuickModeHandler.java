@@ -1,5 +1,6 @@
 package com.eunsearch.quick;
 
+import com.eunsearch.EunSearchMod;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.ClickEvent;
 import net.minecraft.text.Text;
@@ -26,6 +27,7 @@ public class QuickModeHandler {
     public static void toggle(ServerPlayerEntity player) {
         UUID id = player.getUuid();
         QuickState state = STATES.get(id);
+        EunSearchMod.LOGGER.info("[QuickMode] toggle: player={} 当前状态={}", player.getName().getString(), state == null ? "无" : state.stage);
 
         if (state == null) {
             enter(player);
@@ -38,10 +40,15 @@ public class QuickModeHandler {
         QuickState state = new QuickState();
         state.stage = Stage.FIRST;
         STATES.put(player.getUuid(), state);
+        EunSearchMod.LOGGER.info("[QuickMode] 进入快速模式: player={}", player.getName().getString());
         send(player, "§a[EunSearch] 快速配置模式已开启\n§7左键方块 → 记录坐标  右键 → 撤销上一个记录\n§7输入 §e/scan quick §7可退出并复制坐标");
     }
 
     private static void exit(ServerPlayerEntity player, QuickState state) {
+        EunSearchMod.LOGGER.info("[QuickMode] 退出快速模式: player={} stage={} first={} second={}",
+                player.getName().getString(), state.stage,
+                state.first != null ? state.first.toShortString() : null,
+                state.second != null ? state.second.toShortString() : null);
         if (state.stage == Stage.RECORDED && state.first != null && state.second != null) {
             String coords = state.first.getX() + " " + state.first.getY() + " " + state.first.getZ()
                     + " to " + state.second.getX() + " " + state.second.getY() + " " + state.second.getZ();
@@ -61,6 +68,7 @@ public class QuickModeHandler {
         UUID id = player.getUuid();
         QuickState state = STATES.get(id);
         if (state == null) return;
+        EunSearchMod.LOGGER.info("[QuickMode] 左键: player={} pos=({},{},{}) 阶段={}", player.getName().getString(), pos.getX(), pos.getY(), pos.getZ(), state.stage);
 
         switch (state.stage) {
             case FIRST -> {
@@ -89,6 +97,7 @@ public class QuickModeHandler {
         UUID id = player.getUuid();
         QuickState state = STATES.get(id);
         if (state == null) return;
+        EunSearchMod.LOGGER.info("[QuickMode] 右键撤销: player={} 阶段={}", player.getName().getString(), state.stage);
 
         switch (state.stage) {
             case SECOND -> {

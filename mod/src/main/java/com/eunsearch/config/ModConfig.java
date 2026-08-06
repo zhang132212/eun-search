@@ -39,14 +39,17 @@ public class ModConfig {
 
     public static ModConfig load() {
         Path path = getConfigPath();
+        EunSearchMod.LOGGER.info("[ModConfig] load(): 路径={} 存在={}", path.toAbsolutePath(), Files.exists(path));
         if (Files.exists(path)) {
             try {
                 String json = Files.readString(path);
+                EunSearchMod.LOGGER.info("[ModConfig] 读取配置成功: {} 字节", json.length());
                 return GSON.fromJson(json, ModConfig.class);
             } catch (IOException e) {
                 EunSearchMod.LOGGER.error("[EunSearch] 读取配置文件失败", e);
             }
         }
+        EunSearchMod.LOGGER.info("[ModConfig] 配置文件不存在, 创建默认配置");
         ModConfig config = new ModConfig();
         config.save();
         return config;
@@ -58,6 +61,7 @@ public class ModConfig {
             Files.createDirectories(path.getParent());
             String json = GSON.toJson(this);
             Files.writeString(path, json, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            EunSearchMod.LOGGER.info("[ModConfig] 配置已保存: {} 字节 ({} 个扫描条目)", json.length(), scans.size());
         } catch (IOException e) {
             EunSearchMod.LOGGER.error("[EunSearch] 保存配置文件失败", e);
         }

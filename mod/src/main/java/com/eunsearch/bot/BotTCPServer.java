@@ -38,18 +38,18 @@ public class BotTCPServer {
         executor.execute(() -> {
             try {
                 serverSocket = new ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"));
-                EunSearchMod.LOGGER.info("[BotTCP] TCP 服务端已启动: 127.0.0.1:{}", port);
+                EunSearchMod.LOGGER.info("[BotTCP] TCP 服务端已启动: 127.0.0.1:{} (tag={})", port, defaultTag);
                 while (running) {
                     try {
                         Socket client = serverSocket.accept();
-                        EunSearchMod.LOGGER.info("[BotTCP] Mineflayer bot 已连接");
+                        EunSearchMod.LOGGER.info("[BotTCP] Mineflayer bot 已连接 (端口{})", port);
                         handleClient(client);
                     } catch (IOException e) {
                         if (running) EunSearchMod.LOGGER.error("[BotTCP] 接受连接失败", e);
                     }
                 }
             } catch (IOException e) {
-                EunSearchMod.LOGGER.error("[BotTCP] 启动失败", e);
+                EunSearchMod.LOGGER.error("[BotTCP] 启动失败: port={}", port, e);
             }
         });
     }
@@ -59,17 +59,17 @@ public class BotTCPServer {
             try (BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream(), "UTF-8"));
                  PrintWriter out = new PrintWriter(new OutputStreamWriter(client.getOutputStream(), "UTF-8"), true)) {
                 botOut = out;
-                EunSearchMod.LOGGER.info("[BotTCP] client handler started");
+                EunSearchMod.LOGGER.info("[BotTCP] client handler started (端口{})", port);
                 String line;
                 while (running && (line = in.readLine()) != null) {
                     processMessage(line);
                 }
             } catch (IOException e) {
-                EunSearchMod.LOGGER.error("[BotTCP] 连接异常", e);
+                EunSearchMod.LOGGER.error("[BotTCP] 连接异常: {}", e.toString(), e);
             } finally {
                 botOut = null;
                 try { client.close(); } catch (IOException ignored) {}
-                EunSearchMod.LOGGER.info("[BotTCP] Mineflayer bot 已断开");
+                EunSearchMod.LOGGER.info("[BotTCP] Mineflayer bot 已断开 (端口{})", port);
             }
         }, "EunSearch-BotTCP-Client");
         t.setDaemon(true);
@@ -77,9 +77,11 @@ public class BotTCPServer {
     }
 
     private void processMessage(String line) {
+        EunSearchMod.LOGGER.info("[BotTCP] 收到消息: {}", line.length() > 500 ? line.substring(0, 500) : line);
         try {
             JsonObject msg = JsonParser.parseString(line).getAsJsonObject();
             String type = msg.has("type") ? msg.get("type").getAsString() : "";
+            EunSearchMod.LOGGER.info("[BotTCP] 消息类型={}", type);
 
             switch (type) {
                 case "fetchAll", "fetchChest" -> {
@@ -87,11 +89,16 @@ public class BotTCPServer {
                     String itemId = msg.get("itemId").getAsString();
                     int count = msg.has("count") ? msg.get("count").getAsInt() : 64;
                     boolean onlyChest = "fetchChest".equals(type);
+                    EunSearchMod.LOGGER.info("[BotTCP] 取物请求: type={} tag={} itemId={} count={} 端口={}", type, tag, itemId, count, port);
 
                     var entry = EunSearchMod.getInstance().getConfig().findScanByTag(tag);
-                    if (entry == null) { error("未找到扫描标签: " + tag); return; }
+                    if (entry == null) { EunSearchMod.LOGGER.warn("[BotTCP] 未找到扫描标签: {}", tag); error("未找到扫描标签: " + tag); return; }
+                    EunSearchMod.LOGGER.info("[BotTCP] 扫描条目: 维度={} 范围=({},{},{})~({},{},{}) ranges数={}",
+                            entry.dimension, entry.minX(), entry.minY(), entry.minZ(), entry.maxX(), entry.maxY(), entry.maxZ(), entry.ranges.size());
 
+                    long t0 = System.currentTimeMillis();
                     var result = EunSearchAPI.searchItem(EunSearchMod.getInstance().getServer(), tag, itemId);
+                    EunSearchMod.LOGGER.info("[BotTCP] 扫描完成: {}ms 结果容器数={}", System.currentTimeMillis() - t0, result.size());
                     JsonObject resp = new JsonObject();
                     resp.addProperty("type", "scan_result");
                     resp.addProperty("requestTag", tag);
@@ -105,6 +112,8 @@ public class BotTCPServer {
                         if (onlyChest && !"chest".equals(c.containerType) && !"trapped_chest".equals(c.containerType))
                             continue;
                         foundCount++;
+                        EunSearchMod.LOGGER.info("[BotTCP]   结果容器: ({},{},{}) count={} direct={} type={} isDb={}",
+                                c.x, c.y, c.z, c.count, c.directCount, c.containerType, c.isDoubleChest);
                         var o = new JsonObject();
                         o.addProperty("x", c.x); o.addProperty("y", c.y); o.addProperty("z", c.z);
                         o.addProperty("count", c.count);
@@ -132,8 +141,10 @@ public class BotTCPServer {
                     }
                     resp.add("ranges", rangesArr);
                     send(resp);
+                    EunSearchMod.LOGGER.info("[BotTCP] scan_result 已发送: found={}", foundCount);
                 }
                 case "list" -> {
+                    EunSearchMod.LOGGER.info("[BotTCP] list 请求");
                     JsonObject resp = new JsonObject();
                     resp.addProperty("type", "scan_list");
                     var arr = new com.google.gson.JsonArray();
@@ -158,16 +169,17 @@ public class BotTCPServer {
                     botName = msg.has("name") ? msg.get("name").getAsString() : null;
                     EunSearchMod.LOGGER.info("[BotTCP] Bot {} 已注册到端口 {}", botName, port);
                 }
-                default -> error("未知消息类型: " + type);
+                default -> { EunSearchMod.LOGGER.warn("[BotTCP] 未知消息类型: {}", type); error("未知消息类型: " + type); }
             }
         } catch (Exception e) {
-            EunSearchMod.LOGGER.error("[BotTCP] 消息处理失败", e);
+            EunSearchMod.LOGGER.error("[BotTCP] 消息处理失败: {}", e.toString(), e);
             error(e.getMessage());
         }
     }
 
     public boolean sendBotCommand(String action, String player, String tag, String itemId, int count) {
-        if (botOut == null) return false;
+        EunSearchMod.LOGGER.info("[BotTCP] sendBotCommand: action={} player={} tag={} itemId={} count={}", action, player, tag, itemId, count);
+        if (botOut == null) { EunSearchMod.LOGGER.warn("[BotTCP] sendBotCommand: bot未连接(botOut=null), 发送失败"); return false; }
         JsonObject obj = new JsonObject();
         obj.addProperty("type", "bot_command");
         obj.addProperty("action", action);

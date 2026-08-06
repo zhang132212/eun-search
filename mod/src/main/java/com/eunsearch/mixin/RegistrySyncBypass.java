@@ -54,6 +54,7 @@ public class RegistrySyncBypass {
     private static void bypassRegistrySync(ServerConfigurationNetworkHandler handler, MinecraftServer server, CallbackInfo ci) {
         loadWhitelist();
         String playerName = handler.getDebugProfile().name();
+        LOGGER.info("[RegistryBypass] 触发configureClient: 玩家={} 白名单={}", playerName, whitelist);
         if (whitelist.contains(playerName)) {
             LOGGER.info("[RegistryBypass] 跳过 {} 的注册表检查", playerName);
             ci.cancel();

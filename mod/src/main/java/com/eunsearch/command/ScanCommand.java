@@ -147,6 +147,7 @@ public class ScanCommand {
     }
 
     public static void register(CommandDispatcher<ServerCommandSource> d) {
+        EunSearchMod.LOGGER.info("[ScanCommand] 开始注册命令...");
         d.register(literal("scan")
             .executes(ScanCommand::showHelp)
             .then(literal("list").executes(ScanCommand::listScans))
@@ -198,6 +199,7 @@ public class ScanCommand {
                             .then(argument("z2", IntegerArgumentType.integer())
                                 .then(argument("type", StringArgumentType.word())
                                     .executes(ScanCommand::eunLook))))))));
+        EunSearchMod.LOGGER.info("[ScanCommand] 命令注册完成");
     }
 
     private static int botStopHelp(CommandContext<ServerCommandSource> ctx) {
@@ -394,13 +396,29 @@ public class ScanCommand {
     }
 
     private static int addAllScan(CommandContext<ServerCommandSource> ctx) {
-        int x1 = IntegerArgumentType.getInteger(ctx, "rx1"), y1 = IntegerArgumentType.getInteger(ctx, "ry1"), z1 = IntegerArgumentType.getInteger(ctx, "rz1");
-        int x2 = IntegerArgumentType.getInteger(ctx, "rx2"), y2 = IntegerArgumentType.getInteger(ctx, "ry2"), z2 = IntegerArgumentType.getInteger(ctx, "rz2");
+        int x1 = IntegerArgumentType.getInteger(ctx, "x1"), y1 = IntegerArgumentType.getInteger(ctx, "y1"), z1 = IntegerArgumentType.getInteger(ctx, "z1");
+        int x2 = IntegerArgumentType.getInteger(ctx, "x2"), y2 = IntegerArgumentType.getInteger(ctx, "y2"), z2 = IntegerArgumentType.getInteger(ctx, "z2");
         String tag = StringArgumentType.getString(ctx, "tag");
-        String dim = ctx.getSource().getWorld().getRegistryKey().getValue().toString();
+        EunSearchMod.LOGGER.info("[ScanCommand] /scan all 被调用: 范围=({},{},{})~({},{},{}) tag={} 执行者={}",
+                x1, y1, z1, x2, y2, z2, tag, ctx.getSource().getName());
+        String dim;
+        try {
+            var w = ctx.getSource().getWorld();
+            dim = w != null ? w.getRegistryKey().getValue().toString() : "minecraft:overworld";
+            EunSearchMod.LOGGER.info("[ScanCommand] /scan all: getWorld()={} 维度={}", w, dim);
+        } catch (Exception ex) {
+            dim = "minecraft:overworld";
+            EunSearchMod.LOGGER.error("[ScanCommand] /scan all: 获取维度异常, 回退overworld", ex);
+        }
         ScanEntry e = new ScanEntry(tag, "*", x1, y1, z1, x2, y2, z2, dim);
         e.allItems = true; e.item = null;
-        EunSearchMod.getInstance().getConfig().addScan(e); EunSearchMod.getInstance().saveConfig();
+        try {
+            EunSearchMod.getInstance().getConfig().addScan(e);
+            EunSearchMod.getInstance().saveConfig();
+            EunSearchMod.LOGGER.info("[ScanCommand] /scan all 保存成功: tag={}", tag);
+        } catch (Exception ex) {
+            EunSearchMod.LOGGER.error("[ScanCommand] /scan all 保存配置失败", ex);
+        }
         ctx.getSource().sendFeedback(() -> Text.literal("§a[EunSearch] 已保存全物品扫描 §e" + tag), false);
         return 1;
     }
@@ -428,12 +446,15 @@ public class ScanCommand {
 
     private static int runScan(CommandContext<ServerCommandSource> ctx) {
         String tag = StringArgumentType.getString(ctx, "tag");
+        EunSearchMod.LOGGER.info("[ScanCommand] /scan run 被调用: tag={} 执行者={}", tag, ctx.getSource().getName());
         ScanEntry s = EunSearchMod.getInstance().getConfig().findScanByTag(tag);
-        if (s == null) { ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 未找到"), false); return 0; }
+        if (s == null) { EunSearchMod.LOGGER.warn("[ScanCommand] /scan run: 未找到tag={}", tag); ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 未找到"), false); return 0; }
         try {
             long start = System.currentTimeMillis();
             var r = RegionScanner.scan(ctx.getSource().getServer(), s.dimension, s.minX(), s.minY(), s.minZ(), s.maxX(), s.maxY(), s.maxZ(), s.getItems());
             long el = System.currentTimeMillis() - start;
+            EunSearchMod.LOGGER.info("[ScanCommand] /scan run {} 完成: {}ms 容器={} 槽位={}",
+                    tag, el, r.totalContainers, r.totalSlots);
             StringBuilder sb = new StringBuilder("§a[EunSearch] §e" + tag + "§a (§7" + el + "ms§a)\n容器:" + r.totalContainers + " 格:" + r.totalSlots + "\n");
             for (var p : r.itemResults) { String sn = p.itemId.contains(":") ? p.itemId.substring(p.itemId.indexOf(':') + 1) : p.itemId; sb.append("§7- §e").append(sn).append("§7: ").append(String.format("%,d", p.totalCount)).append("个 (").append(String.format("%.2f%%", p.percentage)).append(")\n"); }
             ctx.getSource().sendFeedback(() -> Text.literal(sb.toString()), false);
@@ -445,8 +466,17 @@ public class ScanCommand {
         try {
             ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
             java.util.UUID uuid = player.getUuid();
-            if (LOG_ENABLED.contains(uuid)) { LOG_ENABLED.remove(uuid); ctx.getSource().sendFeedback(() -> Text.literal("§7[EunSearch] 槽位日志已关闭"), false); }
-            else { LOG_ENABLED.add(uuid); ctx.getSource().sendFeedback(() -> Text.literal("§a[EunSearch] 槽位日志已开启"), false); }
+            if (LOG_ENABLED.contains(uuid)) {
+                LOG_ENABLED.remove(uuid);
+                if (LOG_ENABLED.isEmpty()) EunSearchMod.setDebugLogging(false);
+                ctx.getSource().sendFeedback(() -> Text.literal("§7[EunSearch] 槽位日志已关闭"), false);
+                EunSearchMod.LOGGER.info("[ScanCommand] /scan log 关闭: player={}", player.getName().getString());
+            } else {
+                LOG_ENABLED.add(uuid);
+                EunSearchMod.setDebugLogging(true);
+                ctx.getSource().sendFeedback(() -> Text.literal("§a[EunSearch] 槽位日志已开启 (DEBUG全量日志已启用)"), false);
+                EunSearchMod.LOGGER.info("[ScanCommand] /scan log 开启: player={}", player.getName().getString());
+            }
         } catch (Exception e) { ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 仅玩家"), false); }
         return 1;
     }
@@ -528,9 +558,11 @@ public class ScanCommand {
     private static int searchContainer(CommandContext<ServerCommandSource> ctx) {
         String tag = StringArgumentType.getString(ctx, "tag");
         String rawItem = StringArgumentType.getString(ctx, "item");
+        EunSearchMod.LOGGER.info("[ScanCommand] /scan search 被调用: tag={} item={} 执行者={}", tag, rawItem, ctx.getSource().getName());
         ScanEntry scan = EunSearchMod.getInstance().getConfig().findScanByTag(tag);
-        if (scan == null) { ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 未找到 §e" + tag), false); return 0; }
+        if (scan == null) { EunSearchMod.LOGGER.warn("[ScanCommand] /scan search: 未找到tag={}", tag); ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 未找到 §e" + tag), false); return 0; }
         String targetItem = ItemNameMap.getItemId(rawItem);
+        EunSearchMod.LOGGER.info("[ScanCommand] /scan search: 物品名称转换 {} -> {}", rawItem, targetItem);
         ServerPlayerEntity player;
         try { player = ctx.getSource().getPlayerOrThrow(); } catch (Exception e) { ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 仅玩家"), false); return 0; }
         try {
@@ -557,8 +589,9 @@ public class ScanCommand {
                 }
                 groups.add(group.toArray(new BlockPos[0]));
             }
-            if (found.isEmpty()) { ctx.getSource().sendFeedback(() -> Text.literal("§e[EunSearch] 未找到含有 §7" + rawItem + "§e 的容器"), false); return 0; }
+            if (found.isEmpty()) { EunSearchMod.LOGGER.warn("[ScanCommand] /scan search {}: 未找到含 {} 的容器", tag, rawItem); ctx.getSource().sendFeedback(() -> Text.literal("§e[EunSearch] 未找到含有 §7" + rawItem + "§e 的容器"), false); return 0; }
             groups = mergeGroups(groups);
+            EunSearchMod.LOGGER.info("[ScanCommand] /scan search {}: 找到{}个容器, 合并为{}组, 物品总数={}", tag, found.size(), groups.size(), totalItemCount);
             startEdgeMarking((ServerWorld) ctx.getSource().getWorld(), groups, player, posToBlockId);
             final int fTotal = totalItemCount;
             ctx.getSource().sendFeedback(() -> Text.literal("§a[EunSearch] 找到 §e" + found.size() + "§a 个容器, 共 §e" + String.format("%,d", fTotal) + "§a 个 §e" + rawItem + "§a, 标记10秒"), false);

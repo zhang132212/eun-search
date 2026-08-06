@@ -48,7 +48,12 @@ public class RegionScanner {
             int maxX, int maxY, int maxZ,
             List<String> targetItems) throws IOException {
 
+        EunSearchMod.LOGGER.info("[RegionScanner] ===== scan() 开始 =====");
+        EunSearchMod.LOGGER.info("[RegionScanner] 维度={} 范围=({},{},{})~({},{},{}) 目标物品={}",
+                dimension, minX, minY, minZ, maxX, maxY, maxZ, targetItems);
+
         Path regionDir = getRegionDir(server, dimension);
+        EunSearchMod.LOGGER.info("[RegionScanner] 区域目录={} 存在={}", regionDir, Files.exists(regionDir));
         if (!Files.exists(regionDir)) {
             throw new IOException("区域文件目录不存在: " + regionDir);
         }
@@ -62,6 +67,10 @@ public class RegionScanner {
         int minChunkZ = minZ >> 4;
         int maxChunkX = maxX >> 4;
         int maxChunkZ = maxZ >> 4;
+
+        EunSearchMod.LOGGER.info("[RegionScanner] region范围=({}, {})~({}, {}) chunk范围=({}, {})~({}, {})",
+                minRegionX, minRegionZ, maxRegionX, maxRegionZ,
+                minChunkX, minChunkZ, maxChunkX, maxChunkZ);
 
         ScanResult result = new ScanResult();
         result.items = targetItems;
@@ -80,13 +89,23 @@ public class RegionScanner {
                         targetItems, result, false);
             }
         }
+        EunSearchMod.LOGGER.info("[RegionScanner] Pass1 完成: 容器数={} 槽位数={} 孤儿数={}",
+                result.totalContainers, result.totalSlots, result.orphans.size());
 
         // Pass 2: if orphans exist, scan ALL chunks in expanded range (don't skip originals)
         if (!result.orphans.isEmpty()) {
+            EunSearchMod.LOGGER.info("[RegionScanner] 检测到 {} 个孤儿(未配对双箱), 开始 Pass2 扩大范围扫描", result.orphans.size());
+            for (var o : result.orphans) {
+                EunSearchMod.LOGGER.info("[RegionScanner]   孤儿: pos=({},{},{}) id={} isLeft={} facing={} orphanIndex={}",
+                        o.x, o.y, o.z, o.id, o.isLeft, o.facing, o.orphanIndex);
+            }
             int exMinChunkX = minChunkX - 1, exMinChunkZ = minChunkZ - 1;
             int exMaxChunkX = maxChunkX + 1, exMaxChunkZ = maxChunkZ + 1;
             int exMinRegionX = exMinChunkX >> 5, exMinRegionZ = exMinChunkZ >> 5;
             int exMaxRegionX = exMaxChunkX >> 5, exMaxRegionZ = exMaxChunkZ >> 5;
+            EunSearchMod.LOGGER.info("[RegionScanner] Pass2 region范围=({}, {})~({}, {}) chunk范围=({}, {})~({}, {})",
+                    exMinRegionX, exMinRegionZ, exMaxRegionX, exMaxRegionZ,
+                    exMinChunkX, exMinChunkZ, exMaxChunkX, exMaxChunkZ);
             for (int rx = exMinRegionX; rx <= exMaxRegionX; rx++) {
                 for (int rz = exMinRegionZ; rz <= exMaxRegionZ; rz++) {
                     String fileName = "r." + rx + "." + rz + ".mca";
@@ -100,9 +119,12 @@ public class RegionScanner {
                         targetItems, result, true);
                 }
             }
+            EunSearchMod.LOGGER.info("[RegionScanner] Pass2 完成: 剩余孤儿数={}", result.orphans.size());
         }
 
         result.calculatePercentages();
+        EunSearchMod.LOGGER.info("[RegionScanner] ===== scan() 结束: 容器数={} 槽位数={} 物品结果数={} =====",
+                result.totalContainers, result.totalSlots, result.itemResults.size());
         return result;
     }
 
@@ -117,6 +139,7 @@ public class RegionScanner {
             if (raf.length() < header.length)
                 return;
             raf.readFully(header);
+            EunSearchMod.LOGGER.info("[RegionScanner] 打开区域文件 {} ({} bytes, pass{})", regionFile.getFileName(), raf.length(), pass2 ? 2 : 1);
 
             for (int cz = 0; cz < REGION_WIDTH; cz++) {
                 for (int cx = 0; cx < REGION_WIDTH; cx++) {
@@ -152,11 +175,19 @@ public class RegionScanner {
                         byte[] decompressed = decompress(compressed, compressionType);
                         if (decompressed == null)
                             continue;
+                        EunSearchMod.LOGGER.debug("[RegionScanner] chunk({},{}) 压缩类型={} 压缩大小={} 解压后大小={}",
+                                chunkX, chunkZ, compressionType, length - 1, decompressed.length);
 
                         Path tempFile = Files.createTempFile("eun_search_chunk_", ".nbt");
                         try {
                             Files.write(tempFile, decompressed);
                             NbtCompound chunkNbt = NbtIo.read(tempFile);
+                            if (chunkNbt == null) {
+                                EunSearchMod.LOGGER.warn("[RegionScanner] chunk({},{}) NbtIo.read 返回 null!", chunkX, chunkZ);
+                                continue;
+                            }
+                            EunSearchMod.LOGGER.debug("[RegionScanner] chunk({},{}) NBT解析成功, 字符串长度={}",
+                                    chunkX, chunkZ, chunkNbt.toString().length());
                             processChunkNbt(chunkNbt, minX, minY, minZ, maxX, maxY, maxZ,
                                     targetItems, result, pass2);
                         } finally {
@@ -164,8 +195,7 @@ public class RegionScanner {
                         }
 
                     } catch (Exception e) {
-                        EunSearchMod.LOGGER.debug("[EunSearch] 读取chunk ({},{}) 失败: {}",
-                                chunkX, chunkZ, e.getMessage());
+                        EunSearchMod.LOGGER.error("[RegionScanner] 读取chunk ({},{}) 失败: {}", chunkX, chunkZ, e.toString(), e);
                     }
                 }
             }
@@ -177,10 +207,13 @@ public class RegionScanner {
             int maxX, int maxY, int maxZ,
             List<String> targetItems, ScanResult result, boolean pass2) {
 
-        if (!chunkNbt.contains("block_entities"))
+        if (!chunkNbt.contains("block_entities")) {
+            EunSearchMod.LOGGER.debug("[RegionScanner] chunk 无 block_entities 键, 跳过");
             return;
+        }
 
         NbtList blockEntities = chunkNbt.getList("block_entities").orElse(new NbtList());
+        EunSearchMod.LOGGER.debug("[RegionScanner] block_entities 数量={} (pass{})", blockEntities.size(), pass2 ? 2 : 1);
 
         for (int i = 0; i < blockEntities.size(); i++) {
             NbtCompound be = blockEntities.getCompound(i).orElse(null);
@@ -188,10 +221,18 @@ public class RegionScanner {
                 continue;
 
             String id = be.getString("id").orElse("");
-            if (EXCLUDED_IDS.contains(id))
+            int beX = be.getInt("x").orElse(0);
+            int beY = be.getInt("y").orElse(0);
+            int beZ = be.getInt("z").orElse(0);
+            if (EXCLUDED_IDS.contains(id)) {
+                EunSearchMod.LOGGER.debug("[RegionScanner] BE ({},{},{}) id={} 被排除", beX, beY, beZ, id);
                 continue;
-            if (!CONTAINER_IDS.contains(id))
+            }
+            if (!CONTAINER_IDS.contains(id)) {
+                EunSearchMod.LOGGER.debug("[RegionScanner] BE ({},{},{}) id={} 非容器, 跳过", beX, beY, beZ, id);
                 continue;
+            }
+            EunSearchMod.LOGGER.debug("[RegionScanner] 容器BE ({},{},{}) id={} Items键存在={}", beX, beY, beZ, id, be.contains("Items"));
 
             int x = be.getInt("x").orElse(0);
             int y = be.getInt("y").orElse(0);
@@ -199,6 +240,7 @@ public class RegionScanner {
 
             if (x < minX || x > maxX || y < minY || y > maxY
                     || z < minZ || z > maxZ) {
+                EunSearchMod.LOGGER.debug("[RegionScanner] BE ({},{},{}) 超出扫描范围, 跳过", x, y, z);
                 continue;
             }
 
@@ -216,6 +258,7 @@ public class RegionScanner {
             if (isChest) {
                 chestType = readChestType(chunkNbt, x, y, z);
                 chestFacing = readChestFacing(chunkNbt, x, y, z);
+                EunSearchMod.LOGGER.info("[RegionScanner] 箱子 ({},{},{}) type={} facing={}", x, y, z, chestType, chestFacing);
                 a1SlotOffset = chestType.equals("left") ? 27 : 0;
                 if (chestType.equals("right")) {
                     result.containerTypeMap.put(x + "," + y + "," + z, typeId);
@@ -236,6 +279,8 @@ public class RegionScanner {
                             leftInChunk = true; break;
                         }
                     }
+                    EunSearchMod.LOGGER.info("[RegionScanner] 右半箱 ({},{},{}) 期望左半箱 ({},{},{}) 同chunk内存在={}",
+                            x, y, z, lx, y, lz, leftInChunk);
                     if (leftInChunk) continue;
                 }
                 if (chestType.equals("left")) {
@@ -260,6 +305,8 @@ public class RegionScanner {
                             break;
                         }
                     }
+                    EunSearchMod.LOGGER.info("[RegionScanner] 左半箱 ({},{},{}) 期望右半箱 ({},{},{}) 找到partner={} (partner槽数={})",
+                            x, y, z, px, y, pz, partnerItems != null, partnerItems != null ? partnerItems.size() : -1);
                 }
             }
 
@@ -288,6 +335,8 @@ public class RegionScanner {
                         }
                     }
                     if (match && y == orphan.y && id.equals(orphan.id)) {
+                        EunSearchMod.LOGGER.info("[RegionScanner] Pass2 匹配孤儿: 孤儿({},{},{}) 配对方=({},{},{}) facing={} isLeft={}",
+                                orphan.x, orphan.y, orphan.z, x, y, z, orphan.facing, orphan.isLeft);
                         var container = result.containers.get(orphan.orphanIndex);
 
                         // Check if partner is also an orphan (other half of same double chest)
@@ -301,6 +350,7 @@ public class RegionScanner {
                         if (partnerOi >= 0) {
                             // Merge the other orphan's container into this one
                             int partnerIdx = result.orphans.get(partnerOi).orphanIndex;
+                            EunSearchMod.LOGGER.info("[RegionScanner] 配对方也是孤儿(索引{}), 合并容器: idx{} -> idx{}", partnerOi, partnerIdx, orphan.orphanIndex);
                             var partnerContainer = result.containers.get(partnerIdx);
                             container.targetCount += partnerContainer.targetCount;
                             container.directCount += partnerContainer.directCount;
@@ -323,6 +373,7 @@ public class RegionScanner {
                         container.partnerX = x;
                         container.partnerZ = z;
                         result.orphans.remove(oi);
+                        EunSearchMod.LOGGER.info("[RegionScanner] Pass2 孤儿处理完成, 剩余孤儿数={}", result.orphans.size());
                         break;
                     }
                 }
@@ -342,7 +393,8 @@ public class RegionScanner {
             int baseSlots = getContainerCapacity(id, be);
 
             int shulkerBoxesInContainer = 0;
-            if (isChest) EunSearchMod.LOGGER.warn("[EunSearch] Processing chest({},{},{}) type={} a1={} a2={} pNull={}", x, y, z, chestType, a1SlotOffset, a2SlotOffset, partnerItems == null);
+            EunSearchMod.LOGGER.info("[RegionScanner] 处理容器 ({},{},{}) id={} type={} 物品槽数={} partner槽数={} 容量={}",
+                    x, y, z, id, chestType, items.size(), partnerItems != null ? partnerItems.size() : -1, baseSlots);
 
             int[] totalCounts = new int[targetItems.size()];
             int[] directCounts = new int[targetItems.size()];
@@ -355,19 +407,25 @@ public class RegionScanner {
                     continue;
 
                 ItemData itemData = readItemFromSlot(entry);
-                if (itemData == null)
+                if (itemData == null) {
+                    EunSearchMod.LOGGER.debug("[RegionScanner] 槽{} 物品读取失败(格式未知): {}", getSlot(entry, j), entry.toString().length() > 200 ? entry.toString().substring(0, 200) : entry);
                     continue;
+                }
 
                 boolean isShulker = itemData.id != null && itemData.id.contains("shulker_box");
+                EunSearchMod.LOGGER.debug("[RegionScanner]   槽{}: id={} count={} isShulker={} hasComponents={}",
+                        getSlot(entry, j), itemData.id, itemData.count, isShulker, itemData.components != null);
 
                 if (isShulker) {
                     shulkerBoxesInContainer++;
                 }
 
                 if (isShulker && itemData.components != null) {
+                    EunSearchMod.LOGGER.debug("[RegionScanner]   shulker组件键: {}", itemData.components.toString().length() > 300 ? itemData.components.toString().substring(0, 300) : itemData.components);
                     for (int t = 0; t < targetItems.size(); t++) {
                         int[] shulkerCount = countInShulkerBox(itemData.components, targetItems.get(t));
                         if (shulkerCount[1] > 0) {
+                            EunSearchMod.LOGGER.info("[RegionScanner]   shulker内命中目标[{}] 槽数={} 数量={}", targetItems.get(t), shulkerCount[0], shulkerCount[1]);
                             int actualSlot = getSlot(entry, j) + a1SlotOffset;
                             targetSlots[t] += shulkerCount[0];
                             totalCounts[t] += shulkerCount[1];
@@ -379,6 +437,8 @@ public class RegionScanner {
 
                 for (int t = 0; t < targetItems.size(); t++) {
                     if (itemData.id != null && matchesItem(itemData.id, targetItems.get(t))) {
+                        EunSearchMod.LOGGER.info("[RegionScanner]   ★命中目标: 容器({},{},{}) 物品={} 目标={} count={} slot={}",
+                                x, y, z, itemData.id, targetItems.get(t), itemData.count, getSlot(entry, j));
                         targetSlots[t]++;
                         totalCounts[t] += Math.max(1, itemData.count);
                         directCounts[t] += Math.max(1, itemData.count);
@@ -386,6 +446,7 @@ public class RegionScanner {
                 }
             }
             if (partnerItems != null) {
+                EunSearchMod.LOGGER.info("[RegionScanner] 读取partner ({},{},{}) 的 {} 个槽", partnerX, y, partnerZ, partnerItems.size());
                 for (int j = 0; j < partnerItems.size(); j++) {
                     NbtCompound entry = partnerItems.getCompound(j).orElse(null);
                     if (entry == null)
@@ -400,6 +461,7 @@ public class RegionScanner {
                         for (int t = 0; t < targetItems.size(); t++) {
                             int[] sc = countInShulkerBox(itemData.components, targetItems.get(t));
                             if (sc[1] > 0) {
+                                EunSearchMod.LOGGER.info("[RegionScanner]   partner shulker内命中目标[{}] 槽数={} 数量={}", targetItems.get(t), sc[0], sc[1]);
                                 int slot = getSlot(entry, j) + a2SlotOffset;
                                 targetSlots[t] += sc[0];
                                 totalCounts[t] += sc[1];
@@ -410,6 +472,8 @@ public class RegionScanner {
                     }
                     for (int t = 0; t < targetItems.size(); t++) {
                         if (itemData.id != null && matchesItem(itemData.id, targetItems.get(t))) {
+                            EunSearchMod.LOGGER.info("[RegionScanner]   ★partner命中目标: 容器({},{},{}) 物品={} 目标={} count={} slot={}",
+                                    x, y, z, itemData.id, targetItems.get(t), itemData.count, getSlot(entry, j));
                             targetSlots[t]++;
                             totalCounts[t] += Math.max(1, itemData.count);
                             directCounts[t] += Math.max(1, itemData.count);
@@ -451,6 +515,8 @@ public class RegionScanner {
                             info.shulkerSlots.add(new int[] { sd[0], sd[1], sd[2] });
                     }
                     result.containers.add(info);
+                    EunSearchMod.LOGGER.info("[RegionScanner] 记录容器结果: ({},{},{}) 类型={} 槽数={} 目标物品[{}] 数量={} 直接={} 双箱={}",
+                            x, y, z, info.containerType, totalSlots, targetItems.get(t), totalCounts[t], directCounts[t], info.isDoubleChest);
                     if (isChest && !info.shulkerSlots.isEmpty()) {
                         StringBuilder sb2 = new StringBuilder();
                         for (int[] s : info.shulkerSlots) sb2.append(s[0]).append(":").append(s[2]).append(" ");
@@ -465,6 +531,8 @@ public class RegionScanner {
                         orphan.isLeft = chestType.equals("left");
                         orphan.facing = chestFacing;
                         result.orphans.add(orphan);
+                        EunSearchMod.LOGGER.info("[RegionScanner] 记录孤儿: ({},{},{}) isLeft={} facing={} 容器索引={}",
+                                x, y, z, orphan.isLeft, chestFacing, orphan.orphanIndex);
                     }
                 }
             }
@@ -484,25 +552,32 @@ public class RegionScanner {
             if (sec != null && sec.getInt("Y").orElse(Integer.MIN_VALUE) == sectionY)
                 return sec;
         }
+        EunSearchMod.LOGGER.debug("[RegionScanner] findSection(y={}): 未找到sectionY={}", y, sectionY);
         return null;
     }
 
     private static String readBlockStateProperty(NbtCompound chunkNbt, int x, int y, int z, String property, String defaultValue) {
         try {
             NbtCompound section = findSection(chunkNbt, y);
-            if (section == null || !section.contains("block_states"))
+            if (section == null || !section.contains("block_states")) {
+                EunSearchMod.LOGGER.debug("[RegionScanner] readBlockStateProperty({},{},{},{}): 无section或block_states", x, y, z, property);
                 return defaultValue;
+            }
             NbtCompound bs = section.getCompound("block_states").orElse(null);
-            if (bs == null || !bs.contains("palette"))
+            if (bs == null || !bs.contains("palette")) {
+                EunSearchMod.LOGGER.debug("[RegionScanner] readBlockStateProperty({},{},{},{}): 无palette", x, y, z, property);
                 return defaultValue;
+            }
             NbtList palette = bs.getList("palette").orElse(null);
             if (palette == null || palette.isEmpty())
                 return defaultValue;
             long[] data = bs.getLongArray("data").orElse(new long[0]);
             int paletteIdx = 0;
             if (palette.size() > 1) {
-                if (data.length == 0)
+                if (data.length == 0) {
+                    EunSearchMod.LOGGER.debug("[RegionScanner] readBlockStateProperty({},{},{},{}): palette>1但无data", x, y, z, property);
                     return defaultValue;
+                }
                 int bits = Math.max(4, 64 - Long.numberOfLeadingZeros(palette.size() - 1));
                 int entriesPerLong = 64 / bits;
                 int idx = (y & 15) << 8 | (z & 15) << 4 | (x & 15);
@@ -534,36 +609,45 @@ public class RegionScanner {
                         return props.getString(property).orElse(defaultValue);
                     }
                 }
+                EunSearchMod.LOGGER.debug("[RegionScanner] readBlockStateProperty({},{},{},{}): palette[{}]={}", x, y, z, property, paletteIdx, pc.toString().length() > 200 ? pc.toString().substring(0, 200) : pc);
                 return defaultValue;
             }
             return defaultValue;
         } catch (Exception e) {
+            EunSearchMod.LOGGER.debug("[RegionScanner] readBlockStateProperty({},{},{},{}) 异常: {}", x, y, z, property, e.toString());
             return defaultValue;
         }
     }
 
     private static String readChestType(NbtCompound chunkNbt, int x, int y, int z) {
-        return readBlockStateProperty(chunkNbt, x, y, z, "type", "single");
+        String t = readBlockStateProperty(chunkNbt, x, y, z, "type", "single");
+        EunSearchMod.LOGGER.debug("[RegionScanner] readChestType({},{},{}) = {}", x, y, z, t);
+        return t;
     }
 
     private static String readChestFacing(NbtCompound chunkNbt, int x, int y, int z) {
-        return readBlockStateProperty(chunkNbt, x, y, z, "facing", "north");
+        String f = readBlockStateProperty(chunkNbt, x, y, z, "facing", "north");
+        EunSearchMod.LOGGER.debug("[RegionScanner] readChestFacing({},{},{}) = {}", x, y, z, f);
+        return f;
     }
 
     private static int[] countInShulkerBox(NbtCompound components, String normalizedItem) {
         int[] result = new int[] { 0, 0 };
+        EunSearchMod.LOGGER.debug("[RegionScanner] countInShulkerBox: 目标={} 组件键={}", normalizedItem, components.toString().length() > 200 ? components.toString().substring(0, 200) : components);
 
         if (components.contains("minecraft:container")) {
             NbtElement containerTag = components.get("minecraft:container");
             if (containerTag != null) {
                 if (containerTag.getType() == NbtElement.LIST_TYPE) {
                     NbtList containerItems = (NbtList) containerTag;
+                    EunSearchMod.LOGGER.debug("[RegionScanner]   minecraft:container 是LIST, 条目数={}", containerItems.size());
                     for (int i = 0; i < containerItems.size(); i++) {
                         NbtCompound entry = containerItems.getCompound(i).orElse(null);
                         if (entry == null)
                             continue;
                         ItemData itemData = readItemFromSlot(entry);
                         if (itemData != null && itemData.id != null && matchesItem(itemData.id, normalizedItem)) {
+                            EunSearchMod.LOGGER.info("[RegionScanner]   shulker内命中: {} x{}", itemData.id, Math.max(1, itemData.count));
                             result[0]++;
                             result[1] += Math.max(1, itemData.count);
                         }
@@ -572,19 +656,25 @@ public class RegionScanner {
                     NbtCompound containerCompound = (NbtCompound) containerTag;
                     if (containerCompound.contains("Items")) {
                         NbtList containerItems = containerCompound.getList("Items").orElse(new NbtList());
+                        EunSearchMod.LOGGER.debug("[RegionScanner]   minecraft:container 是COMPOUND(含Items), 条目数={}", containerItems.size());
                         for (int i = 0; i < containerItems.size(); i++) {
                             NbtCompound entry = containerItems.getCompound(i).orElse(null);
                             if (entry == null)
                                 continue;
                             ItemData itemData = readItemFromSlot(entry);
                             if (itemData != null && itemData.id != null && matchesItem(itemData.id, normalizedItem)) {
+                                EunSearchMod.LOGGER.info("[RegionScanner]   shulker内命中: {} x{}", itemData.id, Math.max(1, itemData.count));
                                 result[0]++;
                                 result[1] += Math.max(1, itemData.count);
                             }
                         }
+                    } else {
+                        EunSearchMod.LOGGER.debug("[RegionScanner]   minecraft:container COMPOUND 无 Items 键, 键={}", containerCompound.toString().length() > 200 ? containerCompound.toString().substring(0, 200) : containerCompound);
                     }
                 }
             }
+        } else {
+            EunSearchMod.LOGGER.debug("[RegionScanner]   组件中无 minecraft:container 键");
         }
 
         if (components.contains("Items")) {
@@ -621,6 +711,8 @@ public class RegionScanner {
                     data.components = comp;
                 }
             }
+            EunSearchMod.LOGGER.debug("[RegionScanner] readItemFromSlot(新格式item): id={} count={} components={}",
+                    data.id, data.count, data.components != null ? data.components.getKeys().toString() : "null");
             return data;
         }
 
@@ -647,6 +739,8 @@ public class RegionScanner {
                     }
                 }
             }
+            EunSearchMod.LOGGER.debug("[RegionScanner] readItemFromSlot(旧格式id): id={} count={} components={}",
+                    data.id, data.count, data.components != null ? "有" : "无");
             return data;
         }
 
@@ -686,9 +780,13 @@ public class RegionScanner {
             Identifier id = Identifier.tryParse(itemId);
             if (id != null) {
                 var item = Registries.ITEM.get(id);
-                return item.getMaxCount();
+                int max = item.getMaxCount();
+                EunSearchMod.LOGGER.debug("[RegionScanner] getMaxStackSize: {} -> {}", itemId, max);
+                return max;
             }
-        } catch (Exception ignored) {
+            EunSearchMod.LOGGER.debug("[RegionScanner] getMaxStackSize: Identifier解析失败: {}", itemId);
+        } catch (Exception e) {
+            EunSearchMod.LOGGER.debug("[RegionScanner] getMaxStackSize({}) 异常: {}", itemId, e.toString());
         }
         return 64;
     }
@@ -754,8 +852,10 @@ public class RegionScanner {
             if (sections == null)
                 return "minecraft:shulker_box";
             int si = y >> 4;
-            if (si < 0 || si >= sections.size())
+            if (si < 0 || si >= sections.size()) {
+                EunSearchMod.LOGGER.debug("[RegionScanner] readShulkerColor({},{},{}): section索引{}越界(sections数={})", x, y, z, si, sections.size());
                 return "minecraft:shulker_box";
+            }
             NbtCompound section = sections.getCompound(si).orElse(null);
             if (section == null)
                 return "minecraft:shulker_box";
@@ -787,6 +887,7 @@ public class RegionScanner {
             }
             return "minecraft:shulker_box";
         } catch (Exception e) {
+            EunSearchMod.LOGGER.debug("[RegionScanner] readShulkerColor({},{},{}) 异常: {}", x, y, z, e.toString());
             return "minecraft:shulker_box";
         }
     }
@@ -866,6 +967,8 @@ public class RegionScanner {
             int minX, int minY, int minZ,
             int maxX, int maxY, int maxZ,
             int[] outTotals) throws IOException {
+        EunSearchMod.LOGGER.info("[RegionScanner] ===== scanAllItems() 开始: 维度={} 范围=({},{},{})~({},{},{}) =====",
+                dimension, minX, minY, minZ, maxX, maxY, maxZ);
         Path regionDir = getRegionDir(server, dimension);
         if (!Files.exists(regionDir)) {
             throw new IOException("区域文件目录不存在: " + regionDir);

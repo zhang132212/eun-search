@@ -71,6 +71,7 @@ public class EunSearchAPI {
     public static ScanResult scanForItems(MinecraftServer server, String tag, List<String> itemIds) {
         ScanEntry entry = getScanEntry(tag);
         if (entry == null) return null;
+        EunSearchMod.LOGGER.info("[EunSearchAPI] scanForItems: tag={} itemIds={}", tag, itemIds);
 
         long start = System.currentTimeMillis();
         try {
