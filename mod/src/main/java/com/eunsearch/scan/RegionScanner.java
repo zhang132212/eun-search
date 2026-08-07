@@ -379,7 +379,9 @@ public class RegionScanner {
                 }
                 continue; // pass2: don't add to containers or do normal processing
             }
-            if (id.equals("minecraft:shulker_box")) {
+            // 注意: 潜影盒的 BE id 一律是 minecraft:shulker_box (所有颜色共用同一 BlockEntityType),
+            // 颜色必须从 block_states palette 读取真实方块名
+            if (id.contains("shulker_box")) {
                 typeId = readShulkerColor(chunkNbt, x, y, z);
             }
             result.containerTypeMap.put(x + "," + y + "," + z, typeId);
@@ -499,7 +501,9 @@ public class RegionScanner {
                     info.y = y;
                     info.z = z;
                     info.containerType = id.contains(":") ? id.substring(id.indexOf(':') + 1) : id;
-                    info.blockId = id.equals("minecraft:shulker_box") ? readShulkerColor(chunkNbt, x, y, z) : id;
+                    info.blockId = id.contains("shulker_box") ? typeId : id;
+                    info.facing = isChest ? chestFacing : readBlockStateProperty(chunkNbt, x, y, z, "facing", null);
+                    info.chestType = isChest ? chestType : "single";
                     info.totalSlots = totalSlots;
                     info.targetSlots = targetSlots[t];
                     info.targetCount = totalCounts[t];
@@ -845,20 +849,33 @@ public class RegionScanner {
     }
 
     private static String readShulkerColor(NbtCompound chunkNbt, int x, int y, int z) {
+        // 先按位置精确读取该方块的 Name (通过 block_states.data 计算 palette 索引)
+        String exact = readBlockNameAt(chunkNbt, x, y, z);
+        if (exact != null && exact.contains("shulker_box")) {
+            EunSearchMod.LOGGER.info("[RegionScanner] readShulkerColor({},{},{}) 精确读取: {}", x, y, z, exact);
+            return exact;
+        }
+        EunSearchMod.LOGGER.info("[RegionScanner] readShulkerColor({},{},{}) 精确读取失败({}), 回退heuristic", x, y, z, exact);
         try {
             if (!chunkNbt.contains("sections"))
                 return "minecraft:shulker_box";
             NbtList sections = chunkNbt.getList("sections").orElse(null);
             if (sections == null)
                 return "minecraft:shulker_box";
-            int si = y >> 4;
-            if (si < 0 || si >= sections.size()) {
-                EunSearchMod.LOGGER.debug("[RegionScanner] readShulkerColor({},{},{}): section索引{}越界(sections数={})", x, y, z, si, sections.size());
+            // 注意: sections 列表下标不是 Y 值 (1.18+ 世界最低 sectionY 为 -4), 必须按 Y 匹配
+            int sectionY = y >> 4;
+            NbtCompound section = null;
+            for (int i = 0; i < sections.size(); i++) {
+                NbtCompound sec = sections.getCompound(i).orElse(null);
+                if (sec != null && sec.getInt("Y").orElse(Integer.MIN_VALUE) == sectionY) {
+                    section = sec;
+                    break;
+                }
+            }
+            if (section == null) {
+                EunSearchMod.LOGGER.debug("[RegionScanner] readShulkerColor({},{},{}): 未找到sectionY={} (sections数={})", x, y, z, sectionY, sections.size());
                 return "minecraft:shulker_box";
             }
-            NbtCompound section = sections.getCompound(si).orElse(null);
-            if (section == null)
-                return "minecraft:shulker_box";
             if (!section.contains("block_states"))
                 return "minecraft:shulker_box";
             NbtCompound bs = section.getCompound("block_states").orElse(null);
@@ -870,26 +887,79 @@ public class RegionScanner {
 
             // single palette entry → every block is that type
             if (palette.size() == 1) {
-                NbtCompound entry = palette.getCompound(0).orElse(null);
-                if (entry != null)
-                    return entry.getString("Name").orElse("minecraft:shulker_box");
-                return "minecraft:shulker_box";
+                return parsePaletteName(palette.get(0));
             }
 
             // find the first shulker_box entry as heuristic
             for (int i = 0; i < palette.size(); i++) {
-                NbtCompound entry = palette.getCompound(i).orElse(null);
-                if (entry == null)
-                    continue;
-                String name = entry.getString("Name").orElse("");
-                if (name.contains("shulker_box"))
+                String name = parsePaletteName(palette.get(i));
+                if (name != null && name.contains("shulker_box")) {
+                    EunSearchMod.LOGGER.info("[RegionScanner] readShulkerColor({},{},{}) 回退识别到: {}", x, y, z, name);
                     return name;
+                }
             }
+            EunSearchMod.LOGGER.info("[RegionScanner] readShulkerColor({},{},{}) palette中未找到shulker, 返回默认", x, y, z);
             return "minecraft:shulker_box";
         } catch (Exception e) {
             EunSearchMod.LOGGER.debug("[RegionScanner] readShulkerColor({},{},{}) 异常: {}", x, y, z, e.toString());
             return "minecraft:shulker_box";
         }
+    }
+
+    /** 通过 block_states.data 精确计算 (x,y,z) 位置的 palette 索引, 读取其方块名 */
+    private static String readBlockNameAt(NbtCompound chunkNbt, int x, int y, int z) {
+        try {
+            NbtCompound section = findSection(chunkNbt, y);
+            if (section == null || !section.contains("block_states"))
+                return null;
+            NbtCompound bs = section.getCompound("block_states").orElse(null);
+            if (bs == null || !bs.contains("palette"))
+                return null;
+            NbtList palette = bs.getList("palette").orElse(null);
+            if (palette == null || palette.isEmpty())
+                return null;
+            long[] data = bs.getLongArray("data").orElse(new long[0]);
+            int paletteIdx = 0;
+            if (palette.size() > 1) {
+                if (data.length == 0)
+                    return null;
+                int bits = Math.max(4, 64 - Long.numberOfLeadingZeros(palette.size() - 1));
+                int entriesPerLong = 64 / bits;
+                int idx = (y & 15) << 8 | (z & 15) << 4 | (x & 15);
+                int longIndex = idx / entriesPerLong;
+                int bitOffset = (idx % entriesPerLong) * bits;
+                if (longIndex >= data.length)
+                    return null;
+                paletteIdx = (int) ((data[longIndex] >>> bitOffset) & ((1L << bits) - 1));
+                if (paletteIdx < 0 || paletteIdx >= palette.size())
+                    return null;
+            }
+            return parsePaletteName(palette.get(paletteIdx));
+        } catch (Exception e) {
+            EunSearchMod.LOGGER.debug("[RegionScanner] readBlockNameAt({},{},{}) 异常: {}", x, y, z, e.toString());
+            return null;
+        }
+    }
+
+    /** 从 palette 条目解析方块名: 支持 NbtCompound {Name:...} 与 NbtString "minecraft:xxx[...]" 两种格式 */
+    private static String parsePaletteName(NbtElement pe) {
+        try {
+            if (pe instanceof NbtCompound pc) {
+                String n = pc.getString("Name").orElse("");
+                if (!n.isEmpty()) return n;
+                return null;
+            }
+            if (pe instanceof net.minecraft.nbt.NbtString ps) {
+                String s = ps.asString().orElse("");
+                int bracket = s.indexOf('[');
+                if (bracket >= 0) s = s.substring(0, bracket);
+                if (s.isEmpty()) return null;
+                return s;
+            }
+        } catch (Exception e) {
+            EunSearchMod.LOGGER.debug("[RegionScanner] parsePaletteName 异常: {}", e.toString());
+        }
+        return null;
     }
 
     private static String normalizeItemId(String item) {
@@ -1219,6 +1289,8 @@ public class RegionScanner {
         public int x, y, z;
         public String containerType;
         public String blockId;
+        public String facing;      // 容器实际朝向 (north/south/east/west), 无朝向属性时为 null
+        public String chestType = "single"; // chest/trapped_chest 专用: single/left/right
         public int totalSlots = 0;
         public int targetSlots = 0;
         public int targetCount = 0;

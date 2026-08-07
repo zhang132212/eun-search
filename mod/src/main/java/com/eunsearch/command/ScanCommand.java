@@ -10,7 +10,16 @@ import com.eunsearch.config.ScanEntry;
 import com.eunsearch.quick.QuickModeHandler;
 import com.eunsearch.render.ItemNameMap;
 import com.eunsearch.scan.RegionScanner;
+import net.minecraft.block.AbstractFurnaceBlock;
+import net.minecraft.block.BarrelBlock;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.block.ChestBlock;
+import net.minecraft.block.DispenserBlock;
+import net.minecraft.block.HopperBlock;
+import net.minecraft.block.ShulkerBoxBlock;
+import net.minecraft.block.enums.ChestType;
 import net.minecraft.entity.EntityTypes;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.server.MinecraftServer;
@@ -22,10 +31,10 @@ import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.Direction;
 import net.minecraft.registry.Registries;
 import net.minecraft.scoreboard.TeamColor;
 import net.minecraft.util.math.AffineTransformation;
-import org.joml.Matrix4f;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,10 +50,15 @@ public class ScanCommand {
     private static final java.util.Set<java.util.UUID> LOG_ENABLED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final java.util.Map<Integer, MarkerEntry> MARKERS = new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.Map<java.util.UUID, java.util.List<Integer>> PLAYER_MARKER_IDS = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final java.util.Map<java.util.UUID, Integer> GREEN_MARKER = new java.util.concurrent.ConcurrentHashMap<>();
     private static volatile ScheduledExecutorService MARKER_TIMER;
-    private static final String MARKER_TAG = "EunSearchMarker";
+    public static final String MARKER_TAG = "EunSearchMarker";
     private static final int MARKER_SECONDS = 10;
+
+    /** 供 EntityTrackerEntryMixin 查询: 指定实体是否为某玩家的荧光标记 */
+    public static boolean isOwner(int entityId, java.util.UUID playerUuid) {
+        var entry = MARKERS.get(entityId);
+        return entry != null && playerUuid != null && playerUuid.equals(entry.owner);
+    }
 
     private static class MarkerEntry {
         final net.minecraft.entity.Entity entity;
@@ -105,8 +119,13 @@ public class ScanCommand {
         var ids = PLAYER_MARKER_IDS.remove(uuid);
         if (ids != null) {
             for (int id : ids) {
-                var entry = MARKERS.remove(id);
-                if (entry != null && !entry.entity.isRemoved()) entry.entity.discard();
+                // 注意: 必须先 discard 再从 MARKERS 移除 —— EntityTrackerEntryMixin 的
+                // isOwner 查询依赖 MARKERS 记录, 先删记录会导致 remove 包被误过滤、标记残留
+                var entry = MARKERS.get(id);
+                if (entry != null) {
+                    if (!entry.entity.isRemoved()) entry.entity.discard();
+                    MARKERS.remove(id);
+                }
             }
         }
     }
@@ -150,6 +169,7 @@ public class ScanCommand {
         EunSearchMod.LOGGER.info("[ScanCommand] 开始注册命令...");
         d.register(literal("scan")
             .executes(ScanCommand::showHelp)
+            .then(literal("help").executes(ScanCommand::showHelp))
             .then(literal("list").executes(ScanCommand::listScans))
             .then(literal("all")
                 .then(argument("x1", IntegerArgumentType.integer()).then(argument("y1", IntegerArgumentType.integer()).then(argument("z1", IntegerArgumentType.integer())
@@ -168,19 +188,7 @@ public class ScanCommand {
             .then(buildRangeCommand())
         );
 
-        d.register(literal("botSearchAll")
-            .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
-                .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchAll)))
-        );
-        d.register(literal("botSearchChest")
-            .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
-                .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchChest)))
-        );
-        d.register(literal("botStop")
-            .executes(ScanCommand::botStopHelp)
-            .then(argument("bot", StringArgumentType.string()).suggests(BOT_NAME_SUGGESTIONS)
-                .executes(ScanCommand::botStop))
-        );
+        // bot 取物指令 (botSearchAll/botSearchChest/botStop) 暂不注册, 方法保留供后续开发
 
         d.register(literal("scanTcp")
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
@@ -199,6 +207,13 @@ public class ScanCommand {
                             .then(argument("z2", IntegerArgumentType.integer())
                                 .then(argument("type", StringArgumentType.word())
                                     .executes(ScanCommand::eunLook))))))));
+
+        // 简化版搜索: 与 /scan search 完全同一逻辑 (tag+物品, 支持中文名/tab补全)
+        d.register(literal("search")
+            .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
+                .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS)
+                    .executes(ScanCommand::searchContainer))));
+
         EunSearchMod.LOGGER.info("[ScanCommand] 命令注册完成");
     }
 
@@ -263,55 +278,29 @@ public class ScanCommand {
             player.teleport(world, player.getX(), player.getY(), player.getZ(),
                 java.util.Set.of(), yaw, pitch, false);
 
-            // Remove previous green marker
-            Integer oldId = GREEN_MARKER.remove(player.getUuid());
-            if (oldId != null) {
-                var oldEntry = MARKERS.remove(oldId);
-                if (oldEntry != null && !oldEntry.entity.isRemoved()) oldEntry.entity.discard();
-                PLAYER_MARKER_IDS.computeIfPresent(player.getUuid(), (k, v) -> { v.remove(oldId); return v.isEmpty() ? null : v; });
-            }
+            // 清理该玩家旧的标记 (可能多个实体)
+            cleanupPlayerMarkers(player.getUuid());
 
-            // Create green glowing marker
+            // 遍历范围, 读取世界真实方块状态, 逐容器生成真实模型标记
             int mnX = Math.min(x1, x2), mxX = Math.max(x1, x2);
             int mnZ = Math.min(z1, z2), mxZ = Math.max(z1, z2);
             String t = StringArgumentType.getString(ctx, "type");
-            var bs = switch (t) {
-                case "chest" -> Blocks.CHEST.getDefaultState();
-                case "trapped_chest" -> Blocks.TRAPPED_CHEST.getDefaultState();
-                case "barrel" -> Blocks.BARREL.getDefaultState();
-                case "hopper" -> Blocks.HOPPER.getDefaultState();
-                case "dispenser" -> Blocks.DISPENSER.getDefaultState();
-                case "dropper" -> Blocks.DROPPER.getDefaultState();
-                case "furnace" -> Blocks.FURNACE.getDefaultState();
-                case "blast_furnace" -> Blocks.BLAST_FURNACE.getDefaultState();
-                case "smoker" -> Blocks.SMOKER.getDefaultState();
-                case "brewing_stand" -> Blocks.BREWING_STAND.getDefaultState();
-                default -> Blocks.CHEST.getDefaultState();
-            };
-            if (t.contains("shulker_box")) bs = Blocks.SHULKER_BOX.getDefaultState();
-            var entity = new DisplayEntity.BlockDisplayEntity(EntityTypes.BLOCK_DISPLAY, world);
-            entity.setPosition(mnX, y1, mnZ);
-            entity.setBlockState(bs);
-            entity.setTransformation(new AffineTransformation(new Matrix4f().scale(mxX - mnX + 1, 1.0f, mxZ - mnZ + 1)));
-            entity.setGlowing(true);
-            entity.addCommandTag(MARKER_TAG);
-            world.spawnEntity(entity);
-
-            // Green team for glow color
-            var sb = world.getServer().getScoreboard();
-            var team = sb.getTeam("eun_green");
-            if (team == null) {
-                team = sb.addTeam("eun_green");
-                team.setColor(java.util.Optional.of(TeamColor.GREEN));
+            int created = 0;
+            for (int bx = mnX; bx <= mxX; bx++) {
+                for (int bz = mnZ; bz <= mxZ; bz++) {
+                    BlockState real = world.getBlockState(new BlockPos(bx, y1, bz));
+                    if (isContainerBlock(real)) {
+                        createMarkerEntity(world, player, bx, y1, bz, real, true);
+                        created++;
+                    }
+                }
             }
-            sb.addScoreHolderToTeam(entity.getUuidAsString(), team);
-
-            var entry = new MarkerEntry(entity, player.getUuid(), MARKER_SECONDS);
-            MARKERS.put(entity.getId(), entry);
-            GREEN_MARKER.put(player.getUuid(), entity.getId());
-            PLAYER_MARKER_IDS.computeIfAbsent(player.getUuid(), k -> new ArrayList<>()).add(entity.getId());
+            EunSearchMod.LOGGER.info("[ScanCommand] /eunlook: 范围=({},{},{})~({},{},{}) type={} 生成标记数={}",
+                    mnX, y1, mnZ, mxX, y1, mxZ, t, created);
             ensureTimerRunning(world.getServer());
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            EunSearchMod.LOGGER.error("[ScanCommand] /eunlook 异常", e);
+        }
         return 1;
     }
 
@@ -379,17 +368,22 @@ public class ScanCommand {
 
     private static int showHelp(CommandContext<ServerCommandSource> ctx) {
         String sb = "\n§f===== §aEunSearch 指令帮助§f =====\n" +
+                "§7/scan help §f- 显示本帮助\n" +
                 "§7/scan list §f- 列出所有扫描配置\n" +
-                "§7/scan all x1 y1 z1 to x2 y2 z2 <标签> §f- 添加扫描区域\n" +
+                "§7/scan all x1 y1 z1 to x2 y2 z2 <标签> §f- 添加全物品扫描区域\n" +
                 "§7/scan remove <标签> §f- 删除扫描\n" +
                 "§7/scan config reload §f- 热重载配置\n" +
-                "§7/scan run <标签> §f- 手动运行扫描\n" +
-                "§7/scan search <标签> <物品> §f- 搜索容器并标记\n" +
-                "§7/scan markClear §f- 清除容器标记\n" +
-                "§7/scan quick §f- 快速配置坐标\n" +
-                "§7/botSearchAll <标签> <物品> [数量] §f- 向bot发送取物指令\n" +
-                "§7/botSearchChest <标签> <物品> [数量] §f- 向bot发送取物指令(仅箱子)\n" +
-                "§7/botStop <标签> §f- 停止bot当前任务\n" +
+                "§7/scan run <标签> §f- 手动运行扫描统计\n" +
+                "§7/scan search <标签> <物品> §f- 搜索容器并标记(仅执行者可见,10秒)\n" +
+                "§7/scan markClear §f- 清除全部容器标记\n" +
+                "§7/scan quick §f- 快速模式:左键记录坐标,右键撤销\n" +
+                "§7/scan log §f- 开关DEBUG全量日志\n" +
+                "§7/scan range <标签> set x y z to x y z §f- 预设bot寻路范围\n" +
+                "§7/scan range <标签> list|remove ... §f- 查看/删除寻路范围\n" +
+                "§7/search <标签> <物品> §f- 简化版搜索(等同 scan search)\n" +
+                "§7/eunlook x1 y1 z1 x2 z2 <类型> §f- 看向容器范围+绿色标记\n" +
+                "§7/scanTcp <标签> <端口> §f- 注册bot TCP端口(桥接用)\n" +
+                "§f--- §7bot取物指令(botSearchAll/botSearchChest/botStop)开发中, 暂未启用§f ---\n" +
                 "§f===== §7物品支持中文名 + Tab补全§f =====\n";
         ctx.getSource().sendFeedback(() -> Text.literal(sb), false);
         return 1;
@@ -569,14 +563,12 @@ public class ScanCommand {
             var result = RegionScanner.scan(ctx.getSource().getServer(), scan.dimension, scan.minX(), scan.minY(), scan.minZ(), scan.maxX(), scan.maxY(), scan.maxZ(), List.of(targetItem));
             List<BlockPos> found = new ArrayList<>();
             List<BlockPos[]> groups = new ArrayList<>();
-            java.util.Map<BlockPos, String> posToBlockId = new java.util.HashMap<>();
             java.util.Map<BlockPos, RegionScanner.ContainerInfo> posToInfo = new java.util.HashMap<>();
             int totalItemCount = 0;
             for (var ci : result.containers) {
                 if (ci.targetCount <= 0) continue;
                 BlockPos pos = new BlockPos(ci.x, ci.y, ci.z);
                 found.add(pos);
-                posToBlockId.put(pos, ci.blockId != null ? ci.blockId : "minecraft:chest");
                 posToInfo.put(pos, ci);
                 totalItemCount += ci.targetCount;
                 var group = new java.util.LinkedHashSet<BlockPos>(); group.add(pos);
@@ -592,7 +584,7 @@ public class ScanCommand {
             if (found.isEmpty()) { EunSearchMod.LOGGER.warn("[ScanCommand] /scan search {}: 未找到含 {} 的容器", tag, rawItem); ctx.getSource().sendFeedback(() -> Text.literal("§e[EunSearch] 未找到含有 §7" + rawItem + "§e 的容器"), false); return 0; }
             groups = mergeGroups(groups);
             EunSearchMod.LOGGER.info("[ScanCommand] /scan search {}: 找到{}个容器, 合并为{}组, 物品总数={}", tag, found.size(), groups.size(), totalItemCount);
-            startEdgeMarking((ServerWorld) ctx.getSource().getWorld(), groups, player, posToBlockId);
+            startEdgeMarking((ServerWorld) ctx.getSource().getWorld(), posToInfo.values(), player);
             final int fTotal = totalItemCount;
             ctx.getSource().sendFeedback(() -> Text.literal("§a[EunSearch] 找到 §e" + found.size() + "§a 个容器, 共 §e" + String.format("%,d", fTotal) + "§a 个 §e" + rawItem + "§a, 标记10秒"), false);
             sendContainerDetails(player, groups, posToInfo, rawItem);
@@ -616,47 +608,122 @@ public class ScanCommand {
         return r;
     }
 
-    private static void startEdgeMarking(ServerWorld world, List<BlockPos[]> groups, ServerPlayerEntity player,
-                                          java.util.Map<BlockPos, String> posToBlockId) {
-        if (groups.isEmpty()) return;
+    private static void startEdgeMarking(ServerWorld world, java.util.Collection<RegionScanner.ContainerInfo> containers,
+                                          ServerPlayerEntity player) {
+        if (containers.isEmpty()) return;
         cleanupPlayerMarkers(player.getUuid());
 
-        for (BlockPos[] group : groups) {
-            int mnX = Integer.MAX_VALUE, mxX = Integer.MIN_VALUE, mnZ = Integer.MAX_VALUE, mxZ = Integer.MIN_VALUE;
-            int y = group[0].getY();
-            for (BlockPos p : group) { if (p.getX() < mnX) mnX = p.getX(); if (p.getX() > mxX) mxX = p.getX(); if (p.getZ() < mnZ) mnZ = p.getZ(); if (p.getZ() > mxZ) mxZ = p.getZ(); }
-
-            String bid = posToBlockId.getOrDefault(group[0], "minecraft:chest");
-            var bs = switch (bid) {
-                case "minecraft:chest" -> Blocks.CHEST.getDefaultState();
-                case "minecraft:trapped_chest" -> Blocks.TRAPPED_CHEST.getDefaultState();
-                case "minecraft:barrel" -> Blocks.BARREL.getDefaultState();
-                case "minecraft:hopper" -> Blocks.HOPPER.getDefaultState();
-                case "minecraft:dispenser" -> Blocks.DISPENSER.getDefaultState();
-                case "minecraft:dropper" -> Blocks.DROPPER.getDefaultState();
-                case "minecraft:furnace" -> Blocks.FURNACE.getDefaultState();
-                case "minecraft:blast_furnace" -> Blocks.BLAST_FURNACE.getDefaultState();
-                case "minecraft:smoker" -> Blocks.SMOKER.getDefaultState();
-                case "minecraft:brewing_stand" -> Blocks.BREWING_STAND.getDefaultState();
-                case "minecraft:decorated_pot" -> Blocks.DECORATED_POT.getDefaultState();
-                default -> Blocks.CHEST.getDefaultState();
-            };
-            if (bid.contains("shulker_box")) bs = Blocks.SHULKER_BOX.getDefaultState();
-
-            var entity = new DisplayEntity.BlockDisplayEntity(EntityTypes.BLOCK_DISPLAY, world);
-            entity.setPosition(mnX, y, mnZ);
-            entity.setBlockState(bs);
-            entity.setTransformation(new AffineTransformation(new Matrix4f().scale(mxX - mnX + 1, 1.0f, mxZ - mnZ + 1)));
-            entity.setGlowing(true);
-            entity.addCommandTag(MARKER_TAG);
-            world.spawnEntity(entity);
-
-            var entry = new MarkerEntry(entity, player.getUuid(), MARKER_SECONDS);
-            MARKERS.put(entity.getId(), entry);
-            PLAYER_MARKER_IDS.computeIfAbsent(player.getUuid(), k -> new ArrayList<>()).add(entity.getId());
-            world.playSound(null, mnX, y, mnZ, SoundEvents.BLOCK_NOTE_BLOCK_BELL, SoundCategory.BLOCKS, 0.6f, 1.2f);
+        for (var ci : containers) {
+            createMarkerEntity(world, player, ci.x, ci.y, ci.z, buildBlockState(ci), false);
+            if (ci.isDoubleChest) {
+                // 双箱: 右半箱单独一个实体, 显示 type=right 半箱模型
+                RegionScanner.ContainerInfo right = new RegionScanner.ContainerInfo();
+                right.x = ci.partnerX;
+                right.y = ci.y;
+                right.z = ci.partnerZ;
+                right.containerType = ci.containerType;
+                right.blockId = ci.blockId;
+                right.facing = ci.facing;
+                right.chestType = "right";
+                createMarkerEntity(world, player, right.x, right.y, right.z, buildBlockState(right), false);
+            }
         }
         ensureTimerRunning(world.getServer());
+    }
+
+    /** 按容器真实 blockId/朝向/双箱类型构建 BlockState */
+    private static BlockState buildBlockState(RegionScanner.ContainerInfo ci) {
+        String bid = ci.blockId != null ? ci.blockId : "minecraft:chest";
+        Block block = null;
+        Identifier id = Identifier.tryParse(bid);
+        if (id != null) {
+            var b = Registries.BLOCK.get(id);
+            if (b != Blocks.AIR) block = b;
+        }
+        if (block == null) {
+            block = switch (bid) {
+                case "minecraft:trapped_chest" -> Blocks.TRAPPED_CHEST;
+                case "minecraft:barrel" -> Blocks.BARREL;
+                case "minecraft:hopper" -> Blocks.HOPPER;
+                case "minecraft:dispenser" -> Blocks.DISPENSER;
+                case "minecraft:dropper" -> Blocks.DROPPER;
+                case "minecraft:furnace" -> Blocks.FURNACE;
+                case "minecraft:blast_furnace" -> Blocks.BLAST_FURNACE;
+                case "minecraft:smoker" -> Blocks.SMOKER;
+                case "minecraft:brewing_stand" -> Blocks.BREWING_STAND;
+                case "minecraft:decorated_pot" -> Blocks.DECORATED_POT;
+                default -> Blocks.CHEST;
+            };
+        }
+        BlockState bs = block.getDefaultState();
+        Direction dir = null;
+        if (ci.facing != null) {
+            try { dir = Direction.byId(ci.facing); } catch (Exception ignored) {}
+        }
+        if (dir != null) {
+            if (block == Blocks.CHEST || block == Blocks.TRAPPED_CHEST) {
+                bs = bs.with(ChestBlock.FACING, dir);
+            } else if (block == Blocks.BARREL) {
+                bs = bs.with(BarrelBlock.FACING, dir);
+            } else if (block == Blocks.HOPPER) {
+                bs = bs.with(HopperBlock.FACING, dir);
+            } else if (block == Blocks.DISPENSER || block == Blocks.DROPPER) {
+                bs = bs.with(DispenserBlock.FACING, dir);
+            } else if (block == Blocks.FURNACE || block == Blocks.BLAST_FURNACE || block == Blocks.SMOKER) {
+                bs = bs.with(AbstractFurnaceBlock.FACING, dir);
+            } else if (block instanceof ShulkerBoxBlock) {
+                bs = bs.with(ShulkerBoxBlock.FACING, dir);
+            }
+        }
+        if (block == Blocks.CHEST || block == Blocks.TRAPPED_CHEST) {
+            ChestType ct = switch (ci.chestType == null ? "single" : ci.chestType) {
+                case "left" -> ChestType.LEFT;
+                case "right" -> ChestType.RIGHT;
+                default -> ChestType.SINGLE;
+            };
+            bs = bs.with(ChestBlock.CHEST_TYPE, ct);
+        }
+        return bs;
+    }
+
+    /** 在指定方块位置生成一个真实模型的发光标记实体 (scale=1, 不拉伸)。green=true 时加入绿色队伍 */
+    private static void createMarkerEntity(ServerWorld world, ServerPlayerEntity player, int x, int y, int z, BlockState bs, boolean green) {
+        var entity = new DisplayEntity.BlockDisplayEntity(EntityTypes.BLOCK_DISPLAY, world);
+        entity.setPosition(x, y, z);
+        entity.setBlockState(bs);
+        entity.setTransformation(AffineTransformation.IDENTITY);
+        entity.setGlowing(true);
+        entity.addCommandTag(MARKER_TAG);
+
+        // 注意: 必须先登记 MARKERS 再 spawnEntity!
+        // spawnEntity 同步触发 EntityTrackerEntry.startTracking(owner 玩家), mixin 要查 MARKERS 判断归属
+        var entry = new MarkerEntry(entity, player.getUuid(), MARKER_SECONDS);
+        MARKERS.put(entity.getId(), entry);
+        PLAYER_MARKER_IDS.computeIfAbsent(player.getUuid(), k -> new ArrayList<>()).add(entity.getId());
+
+        world.spawnEntity(entity);
+
+        // 点击箭头(/eunlook)触发的标记为绿色, 普通扫描标记保持默认白色
+        if (green) {
+            var sb = world.getServer().getScoreboard();
+            var team = sb.getTeam("eun_green");
+            if (team == null) {
+                team = sb.addTeam("eun_green");
+                team.setColor(java.util.Optional.of(TeamColor.GREEN));
+            }
+            sb.addScoreHolderToTeam(entity.getUuidAsString(), team);
+        }
+        world.playSound(null, x, y, z, SoundEvents.BLOCK_NOTE_BLOCK_BELL, SoundCategory.BLOCKS, 0.6f, 1.2f);
+    }
+
+    private static boolean isContainerBlock(BlockState bs) {
+        var b = bs.getBlock();
+        return b == Blocks.CHEST || b == Blocks.TRAPPED_CHEST
+                || b == Blocks.BARREL || b == Blocks.HOPPER
+                || b == Blocks.DISPENSER || b == Blocks.DROPPER
+                || b == Blocks.FURNACE || b == Blocks.BLAST_FURNACE || b == Blocks.SMOKER
+                || b == Blocks.BREWING_STAND || b == Blocks.DECORATED_POT
+                || b instanceof ShulkerBoxBlock;
     }
 
     private static String containerTypeName(String type) {

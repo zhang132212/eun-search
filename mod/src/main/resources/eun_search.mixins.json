@@ -3,7 +3,8 @@
     "package": "com.eunsearch.mixin",
     "compatibilityLevel": "JAVA_25",
     "server": [
-        "RegistrySyncBypass"
+        "RegistrySyncBypass",
+        "EntityTrackerEntryMixin"
     ],
     "injectors": {
         "defaultRequire": 1

@@ -54,10 +54,12 @@ public class QuickModeHandler {
                     + " to " + state.second.getX() + " " + state.second.getY() + " " + state.second.getZ();
             send(player, "§a[EunSearch] 坐标已就绪，点击复制:");
             player.sendMessage(
-                    Text.literal("§e" + coords)
+                    Text.literal("§e[" + coords + "]")
                             .styled(s -> s.withClickEvent(
                                     new ClickEvent.CopyToClipboard(coords)
-                            ).withColor(Formatting.YELLOW))
+                            ).withColor(Formatting.YELLOW)
+                                    .withHoverEvent(new net.minecraft.text.HoverEvent.ShowText(
+                                            Text.literal("§7点击复制坐标"))))
             );
         }
         STATES.remove(player.getUuid());
