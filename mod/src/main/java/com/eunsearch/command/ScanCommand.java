@@ -686,13 +686,18 @@ public class ScanCommand {
         return bs;
     }
 
-    /** 在指定方块位置生成一个真实模型的发光标记实体 (scale=1, 不拉伸)。green=true 时加入绿色队伍 */
+    /** 在指定方块位置生成一个真实模型的发光标记实体 (scale=1, 不拉伸)。green=true 时显示绿色发光 */
     private static void createMarkerEntity(ServerWorld world, ServerPlayerEntity player, int x, int y, int z, BlockState bs, boolean green) {
         var entity = new DisplayEntity.BlockDisplayEntity(EntityTypes.BLOCK_DISPLAY, world);
         entity.setPosition(x, y, z);
         entity.setBlockState(bs);
         entity.setTransformation(AffineTransformation.IDENTITY);
+        entity.setViewRange(64.0f);
         entity.setGlowing(true);
+        // 点击箭头(/eunlook)触发的标记为绿色, 普通扫描标记保持默认白色
+        if (green) {
+            entity.setGlowColorOverride(TeamColor.GREEN.getRgbColor());
+        }
         entity.addCommandTag(MARKER_TAG);
 
         // 注意: 必须先登记 MARKERS 再 spawnEntity!
@@ -703,16 +708,6 @@ public class ScanCommand {
 
         world.spawnEntity(entity);
 
-        // 点击箭头(/eunlook)触发的标记为绿色, 普通扫描标记保持默认白色
-        if (green) {
-            var sb = world.getServer().getScoreboard();
-            var team = sb.getTeam("eun_green");
-            if (team == null) {
-                team = sb.addTeam("eun_green");
-                team.setColor(java.util.Optional.of(TeamColor.GREEN));
-            }
-            sb.addScoreHolderToTeam(entity.getUuidAsString(), team);
-        }
         world.playSound(null, x, y, z, SoundEvents.BLOCK_NOTE_BLOCK_BELL, SoundCategory.BLOCKS, 0.6f, 1.2f);
     }
 

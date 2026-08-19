@@ -17,6 +17,7 @@
     "mixins": [
         "eun_search.mixins.json"
     ],
+    "accessWidener": "eun_search.accesswidener",
     "depends": {
         "fabricloader": ">=0.19.3",
         "minecraft": "~26.2",

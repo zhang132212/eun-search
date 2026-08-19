@@ -1,0 +1,7 @@
+accessWidener v2 named
+
+# 26.2 中 DisplayEntity 相关的 setter 改为 private，模组需要在服务端构造 BlockDisplayEntity 标记。
+accessible method net/minecraft/entity/decoration/DisplayEntity setTransformation (Lnet/minecraft/util/math/AffineTransformation;)V
+accessible method net/minecraft/entity/decoration/DisplayEntity setViewRange (F)V
+accessible method net/minecraft/entity/decoration/DisplayEntity setGlowColorOverride (I)V
+accessible method net/minecraft/entity/decoration/DisplayEntity$BlockDisplayEntity setBlockState (Lnet/minecraft/block/BlockState;)V
