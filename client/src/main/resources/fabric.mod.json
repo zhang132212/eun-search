@@ -1,0 +1,23 @@
+{
+    "schemaVersion": 1,
+    "id": "eun_search_client",
+    "version": "${version}",
+    "name": "EunSearch Client",
+    "description": "Client-side container search using MiniHUD-Servux container sync",
+    "authors": ["zhang132212"],
+    "contact": {},
+    "license": "MIT",
+    "environment": "client",
+    "entrypoints": {
+        "client": [
+            "com.eunsearch.client.EunSearchClient"
+        ]
+    },
+    "depends": {
+        "fabricloader": ">=${loader_version}",
+        "minecraft": "~${minecraft_version}",
+        "java": ">=25",
+        "fabric-api": ">=0.156.0",
+        "malilib": ">=0.29.4- <0.30.0-"
+    }
+}
