@@ -15,8 +15,9 @@
 
 ## 依赖
 - Fabric 26.2 + Fabric API
-- malilib `0.29.4`
-- 服务端需安装 **Servux** 并启用 `entity_data` 数据提供器（MiniHUD 容器同步依赖此通道）。
+- malilib `0.29.3+`
+- MiniHUD `0.40.4+`（客户端必须安装 MiniHUD，由它负责 Servux 容器同步通道）
+- 服务端需安装 **Servux** 并启用 `entity_data` 数据提供器（MiniHUD 容器同步依赖此通道）。本客户端 mod 不重复注册 `servux:entity_data`，而是复用 MiniHUD 的 Servux 通道，避免与 MiniHUD 冲突。
 
 ## 限制
 - 只扫描**已加载区块**，不扫全图。

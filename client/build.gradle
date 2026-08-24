@@ -23,7 +23,8 @@ dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-    implementation "fi.dy.masa.malilib:malilib-fabric-26.2:0.29.4"
+    implementation "fi.dy.masa.malilib:malilib-fabric-26.2:0.29.3"
+    implementation "fi.dy.masa.minihud:minihud-fabric-26.2:0.40.4"
 }
 
 processResources {
