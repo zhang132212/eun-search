@@ -1,6 +1,7 @@
 package com.eunsearch.client.search;
 
 import com.eunsearch.client.config.ClientConfig;
+import com.eunsearch.client.render.ClientMarkerRenderer;
 import com.eunsearch.client.network.SearchResultSink;
 import com.eunsearch.client.network.ServuxEntitySync;
 import fi.dy.masa.malilib.util.data.tag.CompoundData;
@@ -54,6 +55,7 @@ public class SearchManager {
 
         this.activeQuery = normalizeItem(itemQuery);
         this.hits.clear();
+        ClientMarkerRenderer.clear();
         this.lastClearTime = System.currentTimeMillis();
 
         int radius = Math.max(4, ClientConfig.get().scanRangeBlocks);
@@ -99,6 +101,7 @@ public class SearchManager {
         int count = countItemInContainer(nbt, activeQuery);
         if (count > 0) {
             hits.put(pos.immutable(), count);
+            ClientMarkerRenderer.spawn(pos, false);
         }
     }
 
@@ -171,5 +174,6 @@ public class SearchManager {
     public void clear() {
         this.activeQuery = "";
         this.hits.clear();
+        ClientMarkerRenderer.clear();
     }
 }
