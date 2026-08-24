@@ -21,6 +21,7 @@ import net.minecraft.resources.Identifier;
 public class EunSearchClient implements ClientModInitializer {
     private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.parse("eun_search_client:general"));
     private static KeyMapping searchKey;
+    private static KeyMapping settingsKey;
 
     @Override
     public void onInitializeClient() {
@@ -28,8 +29,13 @@ public class EunSearchClient implements ClientModInitializer {
         ServuxEntitySync.getInstance().init();
         RangeHud.init();
         searchKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.eun_search_client.search", InputConstants.Type.KEYSYM, 74, CATEGORY));
+        settingsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.eun_search_client.settings", InputConstants.Type.KEYSYM, 73, CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            while (searchKey.consumeClick()) {
+            boolean settingsPressed = settingsKey.consumeClick();
+            boolean searchPressed = searchKey.consumeClick();
+            if ((settingsPressed && searchKey.isDown()) || (searchPressed && settingsKey.isDown())) {
+                openSettings();
+            } else if (searchPressed) {
                 handleSearchHotkey();
             }
             ServuxEntitySync.getInstance().tick();
@@ -66,6 +72,13 @@ public class EunSearchClient implements ClientModInitializer {
                     }));
         });
     }
+    private static void openSettings() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.gui.screen() == null) {
+            mc.gui.setScreen(new SettingsScreen(null));
+        }
+    }
+
     private static void handleSearchHotkey() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
