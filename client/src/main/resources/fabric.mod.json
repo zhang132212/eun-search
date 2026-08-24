@@ -18,6 +18,6 @@
         "minecraft": "~${minecraft_version}",
         "java": ">=25",
         "fabric-api": ">=0.156.0",
-        "malilib": ">=0.29.4- <0.30.0-"
+        "malilib": ">=0.29.3- <0.30.0-"
     }
 }
