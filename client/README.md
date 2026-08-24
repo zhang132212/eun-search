@@ -10,6 +10,7 @@
 - `/eclear`：清空搜索结果。
 - HUD 显示当前扫描半径、是否连接 Servux、命中数量。
 - 配置：`config/eun_search_client.json`。
+- **快捷键 J**（可在原版按键设置中改）：主手拿住要查找的物品，按 J 直接在当前范围内搜索该物品。
 
 ## 依赖
 - Fabric 26.2 + Fabric API

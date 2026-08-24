@@ -5,21 +5,35 @@ import com.eunsearch.client.gui.SettingsScreen;
 import com.eunsearch.client.network.ServuxEntitySync;
 import com.eunsearch.client.render.RangeHud;
 import com.eunsearch.client.search.SearchManager;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 public class EunSearchClient implements ClientModInitializer {
+    private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.parse("eun_search_client:general"));
+    private static KeyMapping searchKey;
+
     @Override
     public void onInitializeClient() {
         ClientConfig.load();
         ServuxEntitySync.getInstance().init();
         RangeHud.init();
-        ClientTickEvents.END_CLIENT_TICK.register(client -> ServuxEntitySync.getInstance().tick());
+        searchKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.eun_search_client.search", InputConstants.Type.KEYSYM, 74, CATEGORY));
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            while (searchKey.consumeClick()) {
+                handleSearchHotkey();
+            }
+            ServuxEntitySync.getInstance().tick();
+        });
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
             dispatcher.register(ClientCommands.literal("esearch")
@@ -51,5 +65,19 @@ public class EunSearchClient implements ClientModInitializer {
                         return 1;
                     }));
         });
+    }
+    private static void handleSearchHotkey() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+
+        var stack = mc.player.getMainHandItem();
+        if (stack.isEmpty()) {
+            mc.player.sendSystemMessage(Component.literal("[EunSearch] 请在主手拿要查找的物品，再按快捷键。"));
+            return;
+        }
+
+        String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        SearchManager.INSTANCE.startSearch(itemId);
+        mc.player.sendSystemMessage(Component.literal("[EunSearch] 正在查找手中物品: " + itemId));
     }
 }
