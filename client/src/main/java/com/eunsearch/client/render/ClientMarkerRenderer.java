@@ -11,9 +11,11 @@ import net.minecraft.world.level.Level;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ClientMarkerRenderer {
     private static final Map<BlockPos, Display.BlockDisplay> MARKERS = new LinkedHashMap<>();
+    private static final AtomicInteger NEXT_ENTITY_ID = new AtomicInteger(1_000_000);
 
     private ClientMarkerRenderer() {}
 
@@ -34,6 +36,7 @@ public class ClientMarkerRenderer {
         entity.setGlowColorOverride(green ? 0x55FF55 : 0xFFFFFF);
 
         if (world instanceof ClientLevel clientLevel) {
+            entity.setId(NEXT_ENTITY_ID.getAndIncrement());
             clientLevel.addEntity(entity);
         }
         MARKERS.put(pos.immutable(), entity);
