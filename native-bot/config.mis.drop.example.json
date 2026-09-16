@@ -1,0 +1,18 @@
+{
+  "worker": "Courier",
+  "dimension": "minecraft:overworld",
+  "idle": [-126.62, 77.0, -148.40],
+  "walk": [-142.87, -111.31, 77.0, 78.67, -151.63, -146.54],
+  "allowedTag": "mis",
+  "tcpPort": 0,
+  "autoSpawn": true,
+  "autoRespawn": true,
+  "place": [-128, 76, -149],
+  "recovery": {
+    "mode": "drop",
+    "position": [-128.5, 77.0, -148.5],
+    "yaw": 90,
+    "pitch": 61.6,
+    "receipt": [-129.5, 76.8, -148.5]
+  }
+}
