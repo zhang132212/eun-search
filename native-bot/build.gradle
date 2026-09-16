@@ -1,0 +1,18 @@
+plugins { id 'net.fabricmc.fabric-loom' version '1.17.18' }
+version = '0.1.0'
+group = 'com.eunsearch'
+base { archivesName = 'eun-native-courier' }
+repositories { mavenCentral() }
+dependencies {
+    minecraft 'com.mojang:minecraft:26.2'
+    implementation 'net.fabricmc:fabric-loader:0.19.3'
+    implementation 'net.fabricmc.fabric-api:fabric-api:0.156.0+26.2'
+    compileOnly files('libs/carpet.jar')
+    testRuntimeOnly files('libs/carpet.jar')
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+tasks.withType(JavaCompile).configureEach { options.release = 25; options.encoding = 'UTF-8' }
+java { withSourcesJar(); sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
+test { useJUnitPlatform(); classpath += sourceSets.main.compileClasspath }
+if (project.hasProperty('courierBuildDir')) layout.buildDirectory = file(project.property('courierBuildDir'))

@@ -1,0 +1,9 @@
+.gradle/
+build/
+run/
+libs/*.jar
+# Local server profiling captures and generated analysis artifacts.
+performance/
+# Private live-server task records and deployment notes.
+evidence/
+VALIDATION.md

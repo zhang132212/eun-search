@@ -1,0 +1,22 @@
+{
+  "worker": "Courier",
+  "dimension": "minecraft:overworld",
+  "idle": [-126.62, 77.0, -148.40],
+  "walk": [-142.87, -111.31, 77.0, 78.67, -151.63, -146.54],
+  "allowedTag": "mis",
+  "tcpPort": 0,
+  "autoSpawn": true,
+  "autoRespawn": true,
+  "place": [-128, 76, -149],
+  "recovery": {
+    "mode": "sequence",
+    "batchItems": 1728,
+    "batchDelayMillis": 2000,
+    "loose": {"action": "loose", "position": [-118.51, 77.0, -145.36], "facing": "south", "range": 4.5},
+    "walkAreas": [[-121.0, -115.0, 76.875, 78.67, -147.0, -144.4]],
+    "steps": [
+      {"action": "deposit", "position": [-117.45, 77.0, -145.0], "facing": "south", "range": 4.5},
+      {"action": "use", "position": [-119.55, 76.875, -145.0], "facing": "south", "range": 4.5, "block": "minecraft:note_block"}
+    ]
+  }
+}

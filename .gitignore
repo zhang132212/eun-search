@@ -4,6 +4,7 @@ build/
 mod/run/
 *.jar
 !mod/gradle/wrapper/gradle-wrapper.jar
+!native-bot/gradle/wrapper/gradle-wrapper.jar
 bot_config.json
 bot_heartbeat.json
 *.log
