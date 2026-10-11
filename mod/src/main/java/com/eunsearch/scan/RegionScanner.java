@@ -849,7 +849,9 @@ public class RegionScanner {
         }
         long chunksX = (sizeX + 15) / 16;
         long chunksZ = (sizeZ + 15) / 16;
-        if (chunksX * chunksZ > MAX_SCAN_CHUNKS || sizeX * sizeY * sizeZ > MAX_SCAN_BLOCKS) {
+        if (chunksX * chunksZ > MAX_SCAN_CHUNKS
+                || sizeX > MAX_SCAN_BLOCKS / sizeY
+                || sizeX * sizeY > MAX_SCAN_BLOCKS / sizeZ) {
             throw new IOException("扫描范围过大，请缩小区域");
         }
     }
