@@ -29,6 +29,11 @@ function ask(q) {
 
 async function setupConfig() {
     let needSave = false;
+    // Migrate old configs even when the password is already supplied by the environment.
+    if (config.player && Object.prototype.hasOwnProperty.call(config.player, 'pass')) {
+        delete config.player.pass;
+        needSave = true;
+    }
 
     if (!config.tcp_port) {
         let p = await ask('请输入TCP端口 (默认3002): ');

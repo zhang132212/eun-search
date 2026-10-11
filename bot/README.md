@@ -37,6 +37,9 @@ Minecraft 仓库机器人，配合 EunSearch 模组使用(根目录中已包含)
 聊天指令默认关闭。只有将 `chat_control` 设为 `true`，并把玩家名加入 `chat_users`，该玩家才能使用 `!fetch`、`!come`、`!stop` 和 `!ceshi`。
 
 Bot 密码只在启动时输入，并通过 `LITTLESKIN_PASSWORD` 传给子进程，不会写入 `bot_config.json`。
+Watchdog 启动时也会移除旧配置里的 `player.pass`。通过 Velocity 代理连接时，请设置环境变量 `VELOCITY_SECRET`，与代理的 forwarding secret 保持一致。
+
+停止指令会先取消导航，等待正在执行的取物操作退出，再回收已放置的潜影盒并返回待命点；清理完成前拒绝新取物任务。
 
 ## 多 Bot 部署
 
