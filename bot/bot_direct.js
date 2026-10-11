@@ -18,7 +18,7 @@ const USE_LOCAL = false;
 const VELOCITY_SECRET = process.env.VELOCITY_SECRET || config.velocity_secret || '';
 const LS = { 
     email: config.player?.email || 'placeholder@qq.com', 
-    pass: config.player?.pass || 'placeholder', 
+    pass: process.env.LITTLESKIN_PASSWORD || config.player?.pass || 'placeholder', 
     player: config.player?.name || 'placeholder'
 };
 const TCP_PORT = parseInt(process.argv[2]) || config.tcp_port || 3002;
