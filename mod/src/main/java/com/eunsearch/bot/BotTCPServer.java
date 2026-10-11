@@ -83,11 +83,7 @@ public class BotTCPServer {
                 authenticated = false;
                 EunSearchMod.LOGGER.info("[BotTCP] client handler started");
                 String line;
-                while (running && (line = in.readLine()) != null) {
-                    if (line.length() > 1_000_000) {
-                        error("消息过大");
-                        break;
-                    }
+                while (running && (line = readLineLimited(in)) != null) {
                     if (!authenticated) {
                         if (!authenticate(line)) break;
                         authenticated = true;
@@ -111,6 +107,20 @@ public class BotTCPServer {
         }, "EunSearch-BotTCP-Client");
         t.setDaemon(true);
         t.start();
+    }
+
+    private static String readLineLimited(Reader reader) throws IOException {
+        StringBuilder line = new StringBuilder();
+        int ch;
+        while ((ch = reader.read()) != -1) {
+            if (ch == '\n') return line.toString();
+            if (ch == '\r') continue;
+            if (line.length() >= 1_000_000) {
+                throw new IOException("消息过大");
+            }
+            line.append((char) ch);
+        }
+        return line.length() == 0 ? null : line.toString();
     }
 
     private boolean authenticate(String line) {
