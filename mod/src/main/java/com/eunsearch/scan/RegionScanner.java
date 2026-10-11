@@ -26,6 +26,9 @@ public class RegionScanner {
 
     private static final int SECTOR_SIZE = 4096;
     private static final int REGION_WIDTH = 32;
+    private static final long MAX_SCAN_BLOCKS = 16_000_000L;
+    private static final long MAX_SCAN_CHUNKS = 4_096L;
+    private static final int MAX_DECOMPRESSED_CHUNK_BYTES = 8 * 1024 * 1024;
     private static final Set<String> CONTAINER_IDS = Set.of(
             "minecraft:chest", "minecraft:trapped_chest",
             "minecraft:barrel", "minecraft:hopper",
@@ -48,6 +51,10 @@ public class RegionScanner {
             int maxX, int maxY, int maxZ,
             List<String> targetItems) throws IOException {
 
+        validateBounds(minX, minY, minZ, maxX, maxY, maxZ);
+        if (targetItems == null) {
+            throw new IOException("目标物品列表不能为空");
+        }
         Path regionDir = getRegionDir(server, dimension);
         if (!Files.exists(regionDir)) {
             throw new IOException("区域文件目录不存在: " + regionDir);
@@ -801,24 +808,56 @@ public class RegionScanner {
 
     private static byte[] decompress(byte[] data, byte compressionType) throws IOException {
         if (compressionType == 1) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (GZIPInputStream gz = new GZIPInputStream(new ByteArrayInputStream(data))) {
-                gz.transferTo(out);
+                return readLimited(gz);
             }
-            return out.toByteArray();
         } else if (compressionType == 2) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (InflaterInputStream inf = new InflaterInputStream(new ByteArrayInputStream(data))) {
-                inf.transferTo(out);
+                return readLimited(inf);
             }
-            return out.toByteArray();
         } else if (compressionType == 3) {
+            if (data.length > MAX_DECOMPRESSED_CHUNK_BYTES) {
+                throw new IOException("chunk NBT exceeds size limit");
+            }
             return data;
         }
         return null;
     }
 
+    private static byte[] readLimited(InputStream input) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int total = 0;
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            if (read > MAX_DECOMPRESSED_CHUNK_BYTES - total) {
+                throw new IOException("chunk NBT exceeds size limit");
+            }
+            out.write(buffer, 0, read);
+            total += read;
+        }
+        return out.toByteArray();
+    }
+
+    private static void validateBounds(int minX, int minY, int minZ,
+            int maxX, int maxY, int maxZ) throws IOException {
+        long sizeX = (long) maxX - minX + 1;
+        long sizeY = (long) maxY - minY + 1;
+        long sizeZ = (long) maxZ - minZ + 1;
+        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) {
+            throw new IOException("扫描坐标范围无效");
+        }
+        long chunksX = (sizeX + 15) / 16;
+        long chunksZ = (sizeZ + 15) / 16;
+        if (chunksX * chunksZ > MAX_SCAN_CHUNKS || sizeX * sizeY * sizeZ > MAX_SCAN_BLOCKS) {
+            throw new IOException("扫描范围过大，请缩小区域");
+        }
+    }
+
     private static Path getRegionDir(MinecraftServer server, String dimension) throws IOException {
+        if (dimension == null || Identifier.tryParse(dimension) == null) {
+            throw new IOException("维度标识符无效: " + dimension);
+        }
         Path worldDir = server.getSavePath(WorldSavePath.ROOT);
 
         return switch (dimension) {
@@ -846,16 +885,12 @@ public class RegionScanner {
                 yield legacy;
             }
             default -> {
-                Path legacy = worldDir.resolve("region");
-                if (Files.exists(legacy)) {
-                    yield legacy;
-                }
-                Path modern = worldDir.resolve("dimensions").resolve("minecraft").resolve("overworld")
+                Identifier id = Identifier.tryParse(dimension);
+                Path modern = worldDir.resolve("dimensions")
+                        .resolve(id.getNamespace())
+                        .resolve(id.getPath())
                         .resolve("region");
-                if (Files.exists(modern)) {
-                    yield modern;
-                }
-                yield legacy;
+                yield modern;
             }
         };
     }
@@ -866,6 +901,7 @@ public class RegionScanner {
             int minX, int minY, int minZ,
             int maxX, int maxY, int maxZ,
             int[] outTotals) throws IOException {
+        validateBounds(minX, minY, minZ, maxX, maxY, maxZ);
         Path regionDir = getRegionDir(server, dimension);
         if (!Files.exists(regionDir)) {
             throw new IOException("区域文件目录不存在: " + regionDir);
