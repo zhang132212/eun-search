@@ -886,6 +886,18 @@ public class RegionScanner {
                 }
                 yield legacy;
             }
+            case "minecraft:overworld" -> {
+                Path legacy = worldDir.resolve("region");
+                if (Files.exists(legacy)) {
+                    yield legacy;
+                }
+                Path modern = worldDir.resolve("dimensions").resolve("minecraft").resolve("overworld")
+                        .resolve("region");
+                if (Files.exists(modern)) {
+                    yield modern;
+                }
+                yield legacy;
+            }
             default -> {
                 Identifier id = Identifier.tryParse(dimension);
                 Path modern = worldDir.resolve("dimensions")
