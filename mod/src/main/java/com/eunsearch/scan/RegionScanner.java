@@ -847,8 +847,8 @@ public class RegionScanner {
         if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) {
             throw new IOException("扫描坐标范围无效");
         }
-        long chunksX = (sizeX + 15) / 16;
-        long chunksZ = (sizeZ + 15) / 16;
+        long chunksX = (long) (maxX >> 4) - (minX >> 4) + 1;
+        long chunksZ = (long) (maxZ >> 4) - (minZ >> 4) + 1;
         if (chunksX * chunksZ > MAX_SCAN_CHUNKS
                 || sizeX > MAX_SCAN_BLOCKS / sizeY
                 || sizeX * sizeY > MAX_SCAN_BLOCKS / sizeZ) {

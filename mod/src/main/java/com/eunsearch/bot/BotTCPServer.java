@@ -28,7 +28,7 @@ public class BotTCPServer {
         return t;
     });
     private volatile boolean running;
-    private PrintWriter botOut;
+    private volatile PrintWriter botOut;
 
     public BotTCPServer(int port, String defaultTag) {
         this.port = port;
@@ -47,7 +47,10 @@ public class BotTCPServer {
         running = true;
         executor.execute(() -> {
             try {
-                serverSocket = new ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"));
+                synchronized (this) {
+                    if (!running) return;
+                    serverSocket = new ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"));
+                }
                 EunSearchMod.LOGGER.info("[BotTCP] TCP 服务端已启动: 127.0.0.1:{}", port);
                 if (expectedToken == null) {
                     EunSearchMod.LOGGER.warn("[BotTCP] 未配置 EUNSEARCH_TCP_TOKEN，TCP认证处于兼容模式");
@@ -70,6 +73,7 @@ public class BotTCPServer {
                     }
                 }
             } catch (IOException e) {
+                running = false;
                 EunSearchMod.LOGGER.error("[BotTCP] 启动失败", e);
             }
         });
@@ -81,12 +85,14 @@ public class BotTCPServer {
                  PrintWriter out = new PrintWriter(new OutputStreamWriter(client.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8), true)) {
                 botOut = out;
                 authenticated = false;
+                client.setSoTimeout(10_000);
                 EunSearchMod.LOGGER.info("[BotTCP] client handler started");
                 String line;
                 while (running && (line = readLineLimited(in)) != null) {
                     if (!authenticated) {
                         if (!authenticate(line)) break;
                         authenticated = true;
+                        client.setSoTimeout(0);
                         continue;
                     }
                     processMessage(line);
@@ -94,9 +100,10 @@ public class BotTCPServer {
             } catch (IOException e) {
                 EunSearchMod.LOGGER.error("[BotTCP] 连接异常", e);
             } finally {
-                authenticated = false;
                 synchronized (this) {
                     if (activeClient == client) {
+                        authenticated = false;
+                        botName = null;
                         activeClient = null;
                         botOut = null;
                     }
@@ -258,8 +265,13 @@ public class BotTCPServer {
         send(resp);
     }
 
-    public void stop() {
+    public synchronized void stop() {
         running = false;
+        authenticated = false;
+        botName = null;
+        if (activeClient != null) {
+            try { activeClient.close(); } catch (IOException ignored) {}
+        }
         executor.shutdownNow();
         if (serverSocket != null) {
             try { serverSocket.close(); } catch (IOException ignored) {}

@@ -43,7 +43,10 @@ public class ModConfig {
     }
 
     public static ModConfig load() {
-        Path path = getConfigPath();
+        return load(getConfigPath());
+    }
+
+    static ModConfig load(Path path) {
         if (Files.exists(path)) {
             try {
                 ModConfig parsed = parse(Files.readString(path));
@@ -52,14 +55,19 @@ public class ModConfig {
             } catch (IOException | RuntimeException e) {
                 EunSearchMod.LOGGER.error("[EunSearch] 读取配置文件失败，使用空配置", e);
             }
+            // Preserve existing data for repair instead of overwriting it on parse failure.
+            return new ModConfig();
         }
         ModConfig config = new ModConfig();
-        config.save();
+        config.save(path);
         return config;
     }
 
     public void save() {
-        Path path = getConfigPath();
+        save(getConfigPath());
+    }
+
+    private void save(Path path) {
         try {
             Files.createDirectories(path.getParent());
             String json = GSON.toJson(this);
