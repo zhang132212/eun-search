@@ -17,8 +17,11 @@ public class BotTCPServer {
     private static final Gson GSON = new Gson();
     private final int port;
     private final String defaultTag;
-    private String botName;
+    private final String expectedToken;
+    private volatile String botName;
     private ServerSocket serverSocket;
+    private volatile Socket activeClient;
+    private volatile boolean authenticated;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "EunSearch-BotTCP-Accept");
         t.setDaemon(true);
@@ -30,6 +33,13 @@ public class BotTCPServer {
     public BotTCPServer(int port, String defaultTag) {
         this.port = port;
         this.defaultTag = defaultTag;
+        this.expectedToken = configuredToken();
+    }
+
+    private static String configuredToken() {
+        String token = System.getProperty("eunsearch.tcpToken");
+        if (token == null || token.isBlank()) token = System.getenv("EUNSEARCH_TCP_TOKEN");
+        return token == null || token.isBlank() ? null : token;
     }
 
     public void start() {
@@ -39,9 +49,20 @@ public class BotTCPServer {
             try {
                 serverSocket = new ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"));
                 EunSearchMod.LOGGER.info("[BotTCP] TCP 服务端已启动: 127.0.0.1:{}", port);
+                if (expectedToken == null) {
+                    EunSearchMod.LOGGER.warn("[BotTCP] 未配置 EUNSEARCH_TCP_TOKEN，TCP认证处于兼容模式");
+                }
                 while (running) {
                     try {
                         Socket client = serverSocket.accept();
+                        synchronized (this) {
+                            if (activeClient != null && !activeClient.isClosed()) {
+                                client.close();
+                                EunSearchMod.LOGGER.warn("[BotTCP] 已有客户端连接，拒绝重复连接");
+                                continue;
+                            }
+                            activeClient = client;
+                        }
                         EunSearchMod.LOGGER.info("[BotTCP] Mineflayer bot 已连接");
                         handleClient(client);
                     } catch (IOException e) {
@@ -56,24 +77,64 @@ public class BotTCPServer {
 
     private void handleClient(Socket client) {
         Thread t = new Thread(() -> {
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream(), "UTF-8"));
-                 PrintWriter out = new PrintWriter(new OutputStreamWriter(client.getOutputStream(), "UTF-8"), true)) {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream(), java.nio.charset.StandardCharsets.UTF_8));
+                 PrintWriter out = new PrintWriter(new OutputStreamWriter(client.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8), true)) {
                 botOut = out;
+                authenticated = false;
                 EunSearchMod.LOGGER.info("[BotTCP] client handler started");
                 String line;
                 while (running && (line = in.readLine()) != null) {
+                    if (line.length() > 1_000_000) {
+                        error("消息过大");
+                        break;
+                    }
+                    if (!authenticated) {
+                        if (!authenticate(line)) break;
+                        authenticated = true;
+                        continue;
+                    }
                     processMessage(line);
                 }
             } catch (IOException e) {
                 EunSearchMod.LOGGER.error("[BotTCP] 连接异常", e);
             } finally {
-                botOut = null;
+                authenticated = false;
+                synchronized (this) {
+                    if (activeClient == client) {
+                        activeClient = null;
+                        botOut = null;
+                    }
+                }
                 try { client.close(); } catch (IOException ignored) {}
                 EunSearchMod.LOGGER.info("[BotTCP] Mineflayer bot 已断开");
             }
         }, "EunSearch-BotTCP-Client");
         t.setDaemon(true);
         t.start();
+    }
+
+    private boolean authenticate(String line) {
+        try {
+            JsonObject msg = JsonParser.parseString(line).getAsJsonObject();
+            if (!"register".equals(msg.has("type") ? msg.get("type").getAsString() : "")) {
+                error("连接必须先注册");
+                return false;
+            }
+            String token = msg.has("token") ? msg.get("token").getAsString() : "";
+            if (expectedToken != null &&
+                    !java.security.MessageDigest.isEqual(
+                            expectedToken.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                            token.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+                error("TCP认证失败");
+                return false;
+            }
+            botName = msg.has("name") ? msg.get("name").getAsString() : null;
+            EunSearchMod.LOGGER.info("[BotTCP] Bot {} 已注册到端口 {}", botName, port);
+            return true;
+        } catch (Exception e) {
+            error("注册消息无效");
+            return false;
+        }
     }
 
     private void processMessage(String line) {
@@ -154,10 +215,7 @@ public class BotTCPServer {
                     resp.addProperty("type", "pong");
                     send(resp);
                 }
-                case "register" -> {
-                    botName = msg.has("name") ? msg.get("name").getAsString() : null;
-                    EunSearchMod.LOGGER.info("[BotTCP] Bot {} 已注册到端口 {}", botName, port);
-                }
+                case "register" -> error("连接已注册");
                 default -> error("未知消息类型: " + type);
             }
         } catch (Exception e) {
@@ -167,7 +225,7 @@ public class BotTCPServer {
     }
 
     public boolean sendBotCommand(String action, String player, String tag, String itemId, int count) {
-        if (botOut == null) return false;
+        if (!authenticated || botOut == null) return false;
         JsonObject obj = new JsonObject();
         obj.addProperty("type", "bot_command");
         obj.addProperty("action", action);
@@ -179,7 +237,7 @@ public class BotTCPServer {
         return true;
     }
 
-    private void send(JsonObject obj) {
+    private synchronized void send(JsonObject obj) {
         if (botOut != null) botOut.println(GSON.toJson(obj));
     }
 
