@@ -148,7 +148,7 @@ public class ScanCommand {
     }
 
     public static void register(CommandDispatcher<ServerCommandSource> d) {
-        d.register(literal("scan").requires(CommandManager.requirePermissionLevel(2))
+        d.register(literal("scan").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .executes(ScanCommand::showHelp)
             .then(literal("list").executes(ScanCommand::listScans))
             .then(literal("all")
@@ -168,21 +168,21 @@ public class ScanCommand {
             .then(buildRangeCommand())
         );
 
-        d.register(literal("botSearchAll").requires(CommandManager.requirePermissionLevel(2))
+        d.register(literal("botSearchAll").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchAll)))
         );
-        d.register(literal("botSearchChest").requires(CommandManager.requirePermissionLevel(2))
+        d.register(literal("botSearchChest").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchChest)))
         );
-        d.register(literal("botStop").requires(CommandManager.requirePermissionLevel(2))
+        d.register(literal("botStop").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .executes(ScanCommand::botStopHelp)
             .then(argument("bot", StringArgumentType.string()).suggests(BOT_NAME_SUGGESTIONS)
                 .executes(ScanCommand::botStop))
         );
 
-        d.register(literal("scanTcp").requires(CommandManager.requirePermissionLevel(2))
+        d.register(literal("scanTcp").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("port", IntegerArgumentType.integer(1025, 65535))
                     .executes(ScanCommand::openTcp)))
@@ -191,7 +191,7 @@ public class ScanCommand {
                 .executes(ScanCommand::removeTcp)))
         );
 
-        d.register(literal("eunlook").requires(CommandManager.requirePermissionLevel(2))
+        d.register(literal("eunlook").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("x1", IntegerArgumentType.integer())
                 .then(argument("y1", IntegerArgumentType.integer())
                     .then(argument("z1", IntegerArgumentType.integer())
