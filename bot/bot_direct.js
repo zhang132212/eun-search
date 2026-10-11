@@ -156,6 +156,12 @@ function isShulkerBox(name) { return name && name.includes('shulker_box'); }
 function ts() { return '[' + new Date().toISOString().substring(11, 23) + ']'; }
 function log(...args) { console.log('[LOG]' + ts(), ...args); }
 
+// Chat controls are opt-in and restricted to explicitly listed players.
+function chatAllowed(user) {
+    const allowed = config.chat_users;
+    return config.chat_control === true && Array.isArray(allowed) && allowed.includes(user);
+}
+
 function itemMatch(slotName, target) {
     if (!slotName || !target) return false;
     if (slotName === target || slotName === 'minecraft:' + target || target === 'minecraft:' + slotName) return true;
@@ -954,6 +960,7 @@ async function main() {
 
     bot.on('chat', (user, msg) => {
         if (user === bot.username) return;
+        if (!chatAllowed(user)) return;
         let fm = msg.trim().match(/^!fetch\s+(.+?)\s+(\S+)\s*(\d+)?/);
         if (fm) {
             if (pending) { bot.chat('/msg ' + user + ' 正在执行任务'); return; }
