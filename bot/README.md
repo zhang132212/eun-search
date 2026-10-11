@@ -22,12 +22,15 @@ Minecraft 仓库机器人，配合 EunSearch 模组使用(根目录中已包含)
     "host": "127.0.0.1",
     "port": 25565,
     "tcp_port": 3002,
+    "tcp_token": "与服务端 EUNSEARCH_TCP_TOKEN 相同的随机字符串",
     "player": { "email": "...", "pass": "...", "name": "..." },
     "idle_pos": { "x": 1702, "y": 124, "z": -289.5 },
     "place_pos": { "x": 1702, "y": 124, "z": -290 },
     "drop_pos": { "x": 1695, "y": 124, "z": -294 }
 }
 ```
+
+服务端和 Bot 建议同时设置环境变量 `EUNSEARCH_TCP_TOKEN`，用于 TCP 握手认证；未设置时仅保留本机兼容模式。
 
 ## 多 Bot 部署
 
