@@ -15,6 +15,7 @@ import net.minecraft.entity.EntityTypes;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
@@ -147,7 +148,7 @@ public class ScanCommand {
     }
 
     public static void register(CommandDispatcher<ServerCommandSource> d) {
-        d.register(literal("scan").requires(source -> source.hasElevatedPermissions())
+        d.register(literal("scan").requires(CommandManager.requirePermissionLevel(2))
             .executes(ScanCommand::showHelp)
             .then(literal("list").executes(ScanCommand::listScans))
             .then(literal("all")
@@ -167,21 +168,21 @@ public class ScanCommand {
             .then(buildRangeCommand())
         );
 
-        d.register(literal("botSearchAll").requires(source -> source.hasElevatedPermissions())
+        d.register(literal("botSearchAll").requires(CommandManager.requirePermissionLevel(2))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchAll)))
         );
-        d.register(literal("botSearchChest").requires(source -> source.hasElevatedPermissions())
+        d.register(literal("botSearchChest").requires(CommandManager.requirePermissionLevel(2))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchChest)))
         );
-        d.register(literal("botStop").requires(source -> source.hasElevatedPermissions())
+        d.register(literal("botStop").requires(CommandManager.requirePermissionLevel(2))
             .executes(ScanCommand::botStopHelp)
             .then(argument("bot", StringArgumentType.string()).suggests(BOT_NAME_SUGGESTIONS)
                 .executes(ScanCommand::botStop))
         );
 
-        d.register(literal("scanTcp").requires(source -> source.hasElevatedPermissions())
+        d.register(literal("scanTcp").requires(CommandManager.requirePermissionLevel(2))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("port", IntegerArgumentType.integer(1025, 65535))
                     .executes(ScanCommand::openTcp)))
@@ -190,7 +191,7 @@ public class ScanCommand {
                 .executes(ScanCommand::removeTcp)))
         );
 
-        d.register(literal("eunlook").requires(source -> source.hasElevatedPermissions())
+        d.register(literal("eunlook").requires(CommandManager.requirePermissionLevel(2))
             .then(argument("x1", IntegerArgumentType.integer())
                 .then(argument("y1", IntegerArgumentType.integer())
                     .then(argument("z1", IntegerArgumentType.integer())
