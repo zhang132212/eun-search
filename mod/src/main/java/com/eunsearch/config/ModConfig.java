@@ -7,6 +7,7 @@ import com.eunsearch.EunSearchMod;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,8 +23,9 @@ public class ModConfig {
     }
 
     public ScanEntry findScanByTag(String tag) {
+        if (tag == null || scans == null) return null;
         return scans.stream()
-                .filter(s -> s.tag.equalsIgnoreCase(tag))
+                .filter(s -> s != null && s.tag != null && s.tag.equalsIgnoreCase(tag))
                 .findFirst()
                 .orElse(null);
     }
@@ -41,10 +43,11 @@ public class ModConfig {
         Path path = getConfigPath();
         if (Files.exists(path)) {
             try {
-                String json = Files.readString(path);
-                return GSON.fromJson(json, ModConfig.class);
-            } catch (IOException e) {
-                EunSearchMod.LOGGER.error("[EunSearch] 读取配置文件失败", e);
+                ModConfig parsed = parse(Files.readString(path));
+                if (parsed != null) return parsed;
+                EunSearchMod.LOGGER.error("[EunSearch] 配置文件内容无效，使用空配置");
+            } catch (IOException | RuntimeException e) {
+                EunSearchMod.LOGGER.error("[EunSearch] 读取配置文件失败，使用空配置", e);
             }
         }
         ModConfig config = new ModConfig();
@@ -57,7 +60,13 @@ public class ModConfig {
         try {
             Files.createDirectories(path.getParent());
             String json = GSON.toJson(this);
-            Files.writeString(path, json, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Path tmp = path.resolveSibling(path.getFileName() + ".tmp");
+            Files.writeString(tmp, json, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                Files.move(tmp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             EunSearchMod.LOGGER.error("[EunSearch] 保存配置文件失败", e);
         }
@@ -67,15 +76,26 @@ public class ModConfig {
         Path path = getConfigPath();
         if (!Files.exists(path)) return false;
         try {
-            String json = Files.readString(path);
-            ModConfig fresh = GSON.fromJson(json, ModConfig.class);
-            this.scans = fresh.scans != null ? fresh.scans : new ArrayList<>();
+            ModConfig fresh = parse(Files.readString(path));
+            if (fresh == null) {
+                EunSearchMod.LOGGER.error("[EunSearch] 热重载配置文件失败：内容无效");
+                return false;
+            }
+            this.scans = fresh.scans;
             EunSearchMod.LOGGER.info("[EunSearch] 配置文件已热重载 ({} 个扫描条目)", this.scans.size());
             return true;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             EunSearchMod.LOGGER.error("[EunSearch] 热重载配置文件失败", e);
             return false;
         }
+    }
+
+    private static ModConfig parse(String json) {
+        ModConfig parsed = GSON.fromJson(json, ModConfig.class);
+        if (parsed == null) return null;
+        if (parsed.scans == null) parsed.scans = new ArrayList<>();
+        parsed.scans.removeIf(s -> s == null || s.tag == null || s.tag.isBlank());
+        return parsed;
     }
 
     private static Path getConfigPath() {
