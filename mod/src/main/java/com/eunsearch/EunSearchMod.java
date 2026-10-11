@@ -19,9 +19,11 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
+import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
 
 public class EunSearchMod implements DedicatedServerModInitializer {
 
@@ -33,6 +35,7 @@ public class EunSearchMod implements DedicatedServerModInitializer {
     private ModConfig config;
     private MinecraftServer server;
     private ScheduledExecutorService watcherExecutor;
+    private ScheduledFuture<?> pendingReload;
     private volatile boolean watching = false;
 
     @Override
@@ -154,10 +157,15 @@ public class EunSearchMod implements DedicatedServerModInitializer {
     }
 
     private void startConfigWatcher() {
+        startConfigWatcher(Path.of("config"));
+    }
+
+    void startConfigWatcher(Path configDir) {
         if (watching) return;
         watching = true;
 
-        watcherExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        // One worker blocks in WatchService; another must remain free for delayed reloads.
+        watcherExecutor = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "EunSearch-ConfigWatcher");
             t.setDaemon(true);
             return t;
@@ -165,9 +173,8 @@ public class EunSearchMod implements DedicatedServerModInitializer {
 
         watcherExecutor.execute(() -> {
             try (WatchService watchService = FileSystems.getDefault().newWatchService()) {
-                Path configDir = Path.of("config");
                 Files.createDirectories(configDir);
-                configDir.register(watchService, ENTRY_MODIFY);
+                configDir.register(watchService, ENTRY_MODIFY, ENTRY_CREATE);
 
                 LOGGER.info("[EunSearch] 配置文件监听已启动: {}", configDir.resolve("eun_search.json"));
 
@@ -182,8 +189,9 @@ public class EunSearchMod implements DedicatedServerModInitializer {
                     if (key == null) continue;
 
                     for (WatchEvent<?> event : key.pollEvents()) {
-                        Path changed = (Path) event.context();
-                        if (changed.toString().equals("eun_search.json")) {
+                        if (event.kind() == StandardWatchEventKinds.OVERFLOW
+                                || event.context() instanceof Path changed
+                                && changed.toString().equals("eun_search.json")) {
                             debounceReload();
                         }
                     }
@@ -196,18 +204,29 @@ public class EunSearchMod implements DedicatedServerModInitializer {
         });
     }
 
-    private void debounceReload() {
-        watcherExecutor.schedule(() -> {
-            try {
-                reloadConfig();
-            } catch (Exception e) {
-                LOGGER.error("[EunSearch] 热重载配置文件失败", e);
-            }
+    private synchronized void debounceReload() {
+        if (!watching || watcherExecutor.isShutdown()) return;
+        if (pendingReload != null) pendingReload.cancel(false);
+        MinecraftServer currentServer = server;
+        pendingReload = watcherExecutor.schedule(() -> {
+            if (currentServer == null) return;
+            currentServer.execute(() -> {
+                if (!watching || server != currentServer) return;
+                try {
+                    reloadConfig();
+                } catch (Exception e) {
+                    LOGGER.error("[EunSearch] 热重载配置文件失败", e);
+                }
+            });
         }, 1, TimeUnit.SECONDS);
     }
 
-    private void stopConfigWatcher() {
+    synchronized void stopConfigWatcher() {
         watching = false;
+        if (pendingReload != null) {
+            pendingReload.cancel(false);
+            pendingReload = null;
+        }
         if (watcherExecutor != null) {
             watcherExecutor.shutdownNow();
         }

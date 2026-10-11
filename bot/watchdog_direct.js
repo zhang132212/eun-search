@@ -29,6 +29,11 @@ function ask(q) {
 
 async function setupConfig() {
     let needSave = false;
+    // Migrate old configs even when the password is already supplied by the environment.
+    if (config.player && Object.prototype.hasOwnProperty.call(config.player, 'pass')) {
+        delete config.player.pass;
+        needSave = true;
+    }
 
     if (!config.tcp_port) {
         let p = await ask('请输入TCP端口 (默认3002): ');
@@ -36,7 +41,7 @@ async function setupConfig() {
         needSave = true;
     }
 
-    if (!config.player || !config.player.email || !config.player.pass || !config.player.name) {
+    if (!config.player || !config.player.email || !config.player.name || !process.env.LITTLESKIN_PASSWORD) {
         log('\n--- LittleSkin 账号 ---');
         const ygg = require('yggdrasil')({
             host: 'https://littleskin.cn/api/yggdrasil/authserver',
@@ -57,7 +62,8 @@ async function setupConfig() {
                     });
                 });
                 log('账号验证成功! UUID:', sess.selectedProfile.id, '玩家:', sess.selectedProfile.name);
-                config.player = { email, pass, name };
+                config.player = { email, name };
+                process.env.LITTLESKIN_PASSWORD = pass;
                 needSave = true;
                 break;
             } catch (e) {
@@ -114,7 +120,7 @@ async function setupConfig() {
     // Validate required fields
     let missing = [];
     if (!config.tcp_port) missing.push('tcp_port');
-    if (!config.player || !config.player.email || !config.player.pass || !config.player.name) missing.push('LittleSkin账号');
+    if (!config.player || !config.player.email || !config.player.name || !process.env.LITTLESKIN_PASSWORD) missing.push('LittleSkin账号/密码');
     if (!config.idle_pos || !config.idle_pos.y) missing.push('idle_pos(待命点)');
     if (!config.place_pos) missing.push('place_pos(放盒子点)');
     if (!config.drop_pos) missing.push('drop_pos(丢盒子点)');

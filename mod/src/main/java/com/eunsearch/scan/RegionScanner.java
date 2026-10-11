@@ -26,6 +26,9 @@ public class RegionScanner {
 
     private static final int SECTOR_SIZE = 4096;
     private static final int REGION_WIDTH = 32;
+    private static final long MAX_SCAN_BLOCKS = 16_000_000L;
+    private static final long MAX_SCAN_CHUNKS = 4_096L;
+    private static final int MAX_DECOMPRESSED_CHUNK_BYTES = 8 * 1024 * 1024;
     private static final Set<String> CONTAINER_IDS = Set.of(
             "minecraft:chest", "minecraft:trapped_chest",
             "minecraft:barrel", "minecraft:hopper",
@@ -48,6 +51,10 @@ public class RegionScanner {
             int maxX, int maxY, int maxZ,
             List<String> targetItems) throws IOException {
 
+        validateBounds(minX, minY, minZ, maxX, maxY, maxZ);
+        if (targetItems == null) {
+            throw new IOException("目标物品列表不能为空");
+        }
         Path regionDir = getRegionDir(server, dimension);
         if (!Files.exists(regionDir)) {
             throw new IOException("区域文件目录不存在: " + regionDir);
@@ -487,34 +494,42 @@ public class RegionScanner {
         return null;
     }
 
-    private static String readBlockStateProperty(NbtCompound chunkNbt, int x, int y, int z, String property, String defaultValue) {
+    private static NbtElement readBlockState(NbtCompound chunkNbt, int x, int y, int z) {
         try {
             NbtCompound section = findSection(chunkNbt, y);
             if (section == null || !section.contains("block_states"))
-                return defaultValue;
+                return null;
             NbtCompound bs = section.getCompound("block_states").orElse(null);
             if (bs == null || !bs.contains("palette"))
-                return defaultValue;
+                return null;
             NbtList palette = bs.getList("palette").orElse(null);
             if (palette == null || palette.isEmpty())
-                return defaultValue;
+                return null;
             long[] data = bs.getLongArray("data").orElse(new long[0]);
             int paletteIdx = 0;
             if (palette.size() > 1) {
                 if (data.length == 0)
-                    return defaultValue;
+                    return null;
                 int bits = Math.max(4, 64 - Long.numberOfLeadingZeros(palette.size() - 1));
                 int entriesPerLong = 64 / bits;
                 int idx = (y & 15) << 8 | (z & 15) << 4 | (x & 15);
                 int longIndex = idx / entriesPerLong;
                 int bitOffset = (idx % entriesPerLong) * bits;
                 if (longIndex >= data.length)
-                    return defaultValue;
+                    return null;
                 paletteIdx = (int) ((data[longIndex] >>> bitOffset) & ((1L << bits) - 1));
                 if (paletteIdx < 0 || paletteIdx >= palette.size())
-                    return defaultValue;
+                    return null;
             }
-            NbtElement pe = palette.get(paletteIdx);
+            return palette.get(paletteIdx);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String readBlockStateProperty(NbtCompound chunkNbt, int x, int y, int z, String property, String defaultValue) {
+        try {
+            NbtElement pe = readBlockState(chunkNbt, x, y, z);
             if (pe instanceof net.minecraft.nbt.NbtString ps) {
                 String s = ps.asString().orElse("");
                 int pi = s.indexOf(property + "=");
@@ -747,48 +762,16 @@ public class RegionScanner {
     }
 
     private static String readShulkerColor(NbtCompound chunkNbt, int x, int y, int z) {
-        try {
-            if (!chunkNbt.contains("sections"))
-                return "minecraft:shulker_box";
-            NbtList sections = chunkNbt.getList("sections").orElse(null);
-            if (sections == null)
-                return "minecraft:shulker_box";
-            int si = y >> 4;
-            if (si < 0 || si >= sections.size())
-                return "minecraft:shulker_box";
-            NbtCompound section = sections.getCompound(si).orElse(null);
-            if (section == null)
-                return "minecraft:shulker_box";
-            if (!section.contains("block_states"))
-                return "minecraft:shulker_box";
-            NbtCompound bs = section.getCompound("block_states").orElse(null);
-            if (bs == null)
-                return "minecraft:shulker_box";
-            NbtList palette = bs.getList("palette").orElse(null);
-            if (palette == null || palette.isEmpty())
-                return "minecraft:shulker_box";
-
-            // single palette entry → every block is that type
-            if (palette.size() == 1) {
-                NbtCompound entry = palette.getCompound(0).orElse(null);
-                if (entry != null)
-                    return entry.getString("Name").orElse("minecraft:shulker_box");
-                return "minecraft:shulker_box";
-            }
-
-            // find the first shulker_box entry as heuristic
-            for (int i = 0; i < palette.size(); i++) {
-                NbtCompound entry = palette.getCompound(i).orElse(null);
-                if (entry == null)
-                    continue;
-                String name = entry.getString("Name").orElse("");
-                if (name.contains("shulker_box"))
-                    return name;
-            }
-            return "minecraft:shulker_box";
-        } catch (Exception e) {
-            return "minecraft:shulker_box";
+        NbtElement state = readBlockState(chunkNbt, x, y, z);
+        String name = "";
+        if (state instanceof NbtCompound compound) {
+            name = compound.getString("Name").orElse("");
+        } else if (state instanceof net.minecraft.nbt.NbtString string) {
+            name = string.asString().orElse("");
+            int properties = name.indexOf('[');
+            if (properties >= 0) name = name.substring(0, properties);
         }
+        return name.endsWith("shulker_box") ? name : "minecraft:shulker_box";
     }
 
     private static String normalizeItemId(String item) {
@@ -801,24 +784,58 @@ public class RegionScanner {
 
     private static byte[] decompress(byte[] data, byte compressionType) throws IOException {
         if (compressionType == 1) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (GZIPInputStream gz = new GZIPInputStream(new ByteArrayInputStream(data))) {
-                gz.transferTo(out);
+                return readLimited(gz);
             }
-            return out.toByteArray();
         } else if (compressionType == 2) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (InflaterInputStream inf = new InflaterInputStream(new ByteArrayInputStream(data))) {
-                inf.transferTo(out);
+                return readLimited(inf);
             }
-            return out.toByteArray();
         } else if (compressionType == 3) {
+            if (data.length > MAX_DECOMPRESSED_CHUNK_BYTES) {
+                throw new IOException("chunk NBT exceeds size limit");
+            }
             return data;
         }
         return null;
     }
 
+    private static byte[] readLimited(InputStream input) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int total = 0;
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            if (read > MAX_DECOMPRESSED_CHUNK_BYTES - total) {
+                throw new IOException("chunk NBT exceeds size limit");
+            }
+            out.write(buffer, 0, read);
+            total += read;
+        }
+        return out.toByteArray();
+    }
+
+    private static void validateBounds(int minX, int minY, int minZ,
+            int maxX, int maxY, int maxZ) throws IOException {
+        long sizeX = (long) maxX - minX + 1;
+        long sizeY = (long) maxY - minY + 1;
+        long sizeZ = (long) maxZ - minZ + 1;
+        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) {
+            throw new IOException("扫描坐标范围无效");
+        }
+        long chunksX = (long) (maxX >> 4) - (minX >> 4) + 1;
+        long chunksZ = (long) (maxZ >> 4) - (minZ >> 4) + 1;
+        if (chunksX * chunksZ > MAX_SCAN_CHUNKS
+                || sizeX > MAX_SCAN_BLOCKS / sizeY
+                || sizeX * sizeY > MAX_SCAN_BLOCKS / sizeZ) {
+            throw new IOException("扫描范围过大，请缩小区域");
+        }
+    }
+
     private static Path getRegionDir(MinecraftServer server, String dimension) throws IOException {
+        if (dimension == null || Identifier.tryParse(dimension) == null) {
+            throw new IOException("维度标识符无效: " + dimension);
+        }
         Path worldDir = server.getSavePath(WorldSavePath.ROOT);
 
         return switch (dimension) {
@@ -845,7 +862,7 @@ public class RegionScanner {
                 }
                 yield legacy;
             }
-            default -> {
+            case "minecraft:overworld" -> {
                 Path legacy = worldDir.resolve("region");
                 if (Files.exists(legacy)) {
                     yield legacy;
@@ -857,6 +874,14 @@ public class RegionScanner {
                 }
                 yield legacy;
             }
+            default -> {
+                Identifier id = Identifier.tryParse(dimension);
+                Path modern = worldDir.resolve("dimensions")
+                        .resolve(id.getNamespace())
+                        .resolve(id.getPath())
+                        .resolve("region");
+                yield modern;
+            }
         };
     }
 
@@ -866,6 +891,7 @@ public class RegionScanner {
             int minX, int minY, int minZ,
             int maxX, int maxY, int maxZ,
             int[] outTotals) throws IOException {
+        validateBounds(minX, minY, minZ, maxX, maxY, maxZ);
         Path regionDir = getRegionDir(server, dimension);
         if (!Files.exists(regionDir)) {
             throw new IOException("区域文件目录不存在: " + regionDir);

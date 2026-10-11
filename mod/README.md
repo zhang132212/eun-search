@@ -2,6 +2,8 @@
 
 Minecraft 26.2 Fabric 容器物品扫描模组，配合 Mineflayer bot 实现自动取物。
 
+所有管理指令需要 OP（权限等级 2）。
+
 ## 功能
 
 - **区域扫描**：直接读取 `.mca` 区域文件，无需加载区块
@@ -64,6 +66,8 @@ Minecraft 26.2 Fabric 容器物品扫描模组，配合 Mineflayer bot 实现自
   }
 }
 ```
+
+TCP Bot 连接建议在服务端和 Bot 进程同时设置 `EUNSEARCH_TCP_TOKEN`。未设置时保留本机兼容模式。
 
 ## 环境
 

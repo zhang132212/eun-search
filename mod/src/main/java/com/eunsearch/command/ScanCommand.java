@@ -15,6 +15,7 @@ import net.minecraft.entity.EntityTypes;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
@@ -147,7 +148,7 @@ public class ScanCommand {
     }
 
     public static void register(CommandDispatcher<ServerCommandSource> d) {
-        d.register(literal("scan")
+        d.register(literal("scan").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .executes(ScanCommand::showHelp)
             .then(literal("list").executes(ScanCommand::listScans))
             .then(literal("all")
@@ -167,21 +168,21 @@ public class ScanCommand {
             .then(buildRangeCommand())
         );
 
-        d.register(literal("botSearchAll")
+        d.register(literal("botSearchAll").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchAll)))
         );
-        d.register(literal("botSearchChest")
+        d.register(literal("botSearchChest").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("item", StringArgumentType.greedyString()).suggests(ITEM_SUGGESTIONS).executes(ScanCommand::botFetchChest)))
         );
-        d.register(literal("botStop")
+        d.register(literal("botStop").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .executes(ScanCommand::botStopHelp)
             .then(argument("bot", StringArgumentType.string()).suggests(BOT_NAME_SUGGESTIONS)
                 .executes(ScanCommand::botStop))
         );
 
-        d.register(literal("scanTcp")
+        d.register(literal("scanTcp").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("tag", StringArgumentType.string()).suggests(SEARCH_TAG_SUGGESTIONS)
                 .then(argument("port", IntegerArgumentType.integer(1025, 65535))
                     .executes(ScanCommand::openTcp)))
@@ -190,7 +191,7 @@ public class ScanCommand {
                 .executes(ScanCommand::removeTcp)))
         );
 
-        d.register(literal("eunlook")
+        d.register(literal("eunlook").requires(CommandManager.requirePermissionLevel(CommandManager.GAMEMASTERS_CHECK))
             .then(argument("x1", IntegerArgumentType.integer())
                 .then(argument("y1", IntegerArgumentType.integer())
                     .then(argument("z1", IntegerArgumentType.integer())
@@ -394,8 +395,8 @@ public class ScanCommand {
     }
 
     private static int addAllScan(CommandContext<ServerCommandSource> ctx) {
-        int x1 = IntegerArgumentType.getInteger(ctx, "rx1"), y1 = IntegerArgumentType.getInteger(ctx, "ry1"), z1 = IntegerArgumentType.getInteger(ctx, "rz1");
-        int x2 = IntegerArgumentType.getInteger(ctx, "rx2"), y2 = IntegerArgumentType.getInteger(ctx, "ry2"), z2 = IntegerArgumentType.getInteger(ctx, "rz2");
+        int x1 = IntegerArgumentType.getInteger(ctx, "x1"), y1 = IntegerArgumentType.getInteger(ctx, "y1"), z1 = IntegerArgumentType.getInteger(ctx, "z1");
+        int x2 = IntegerArgumentType.getInteger(ctx, "x2"), y2 = IntegerArgumentType.getInteger(ctx, "y2"), z2 = IntegerArgumentType.getInteger(ctx, "z2");
         String tag = StringArgumentType.getString(ctx, "tag");
         String dim = ctx.getSource().getWorld().getRegistryKey().getValue().toString();
         ScanEntry e = new ScanEntry(tag, "*", x1, y1, z1, x2, y2, z2, dim);
@@ -407,8 +408,9 @@ public class ScanCommand {
 
     private static int removeScan(CommandContext<ServerCommandSource> ctx) {
         String tag = StringArgumentType.getString(ctx, "tag");
-        boolean ok = EunSearchMod.getInstance().getConfig().removeScan(tag); EunSearchMod.getInstance().saveConfig();
-        ctx.getSource().sendFeedback(() -> Text.literal(true ? "§a[EunSearch] 已删除 §e" + tag : "§c[EunSearch] 未找到 §e" + tag), false);
+        boolean ok = EunSearchMod.getInstance().getConfig().removeScan(tag);
+        if (ok) EunSearchMod.getInstance().saveConfig();
+        ctx.getSource().sendFeedback(() -> Text.literal(ok ? "§a[EunSearch] 已删除 §e" + tag : "§c[EunSearch] 未找到 §e" + tag), false);
         return 1;
     }
 
@@ -432,11 +434,33 @@ public class ScanCommand {
         if (s == null) { ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 未找到"), false); return 0; }
         try {
             long start = System.currentTimeMillis();
-            var r = RegionScanner.scan(ctx.getSource().getServer(), s.dimension, s.minX(), s.minY(), s.minZ(), s.maxX(), s.maxY(), s.maxZ(), s.getItems());
-            long el = System.currentTimeMillis() - start;
-            StringBuilder sb = new StringBuilder("§a[EunSearch] §e" + tag + "§a (§7" + el + "ms§a)\n容器:" + r.totalContainers + " 格:" + r.totalSlots + "\n");
-            for (var p : r.itemResults) { String sn = p.itemId.contains(":") ? p.itemId.substring(p.itemId.indexOf(':') + 1) : p.itemId; sb.append("§7- §e").append(sn).append("§7: ").append(String.format("%,d", p.totalCount)).append("个 (").append(String.format("%.2f%%", p.percentage)).append(")\n"); }
-            ctx.getSource().sendFeedback(() -> Text.literal(sb.toString()), false);
+            StringBuilder sb;
+            if (s.allItems) {
+                int[] totals = new int[2];
+                var all = RegionScanner.scanAllItems(ctx.getSource().getServer(), s.dimension,
+                        s.minX(), s.minY(), s.minZ(), s.maxX(), s.maxY(), s.maxZ(), totals);
+                sb = new StringBuilder("§a[EunSearch] §e" + tag + "§a (§7"
+                        + (System.currentTimeMillis() - start) + "ms§a)\n容器:" + totals[0]
+                        + " 格:" + totals[1] + "\n");
+                for (var entry : all.entrySet()) {
+                    sb.append("§7- §e").append(entry.getKey()).append("§7: ")
+                            .append(String.format("%,d", entry.getValue()[0])).append("个\n");
+                }
+            } else {
+                var r = RegionScanner.scan(ctx.getSource().getServer(), s.dimension,
+                        s.minX(), s.minY(), s.minZ(), s.maxX(), s.maxY(), s.maxZ(), s.getItems());
+                sb = new StringBuilder("§a[EunSearch] §e" + tag + "§a (§7"
+                        + (System.currentTimeMillis() - start) + "ms§a)\n容器:" + r.totalContainers
+                        + " 格:" + r.totalSlots + "\n");
+                for (var p : r.itemResults) {
+                    String sn = p.itemId.contains(":") ? p.itemId.substring(p.itemId.indexOf(':') + 1) : p.itemId;
+                    sb.append("§7- §e").append(sn).append("§7: ")
+                            .append(String.format("%,d", p.totalCount)).append("个 (")
+                            .append(String.format("%.2f%%", p.percentage)).append(")\n");
+                }
+            }
+            final String feedback = sb.toString();
+            ctx.getSource().sendFeedback(() -> Text.literal(feedback), false);
         } catch (Exception e) { EunSearchMod.LOGGER.error("扫描失败", e); }
         return 1;
     }
@@ -506,8 +530,8 @@ public class ScanCommand {
         String tag = StringArgumentType.getString(ctx, "tag");
         ScanEntry entry = EunSearchMod.getInstance().getConfig().findScanByTag(tag);
         if (entry == null) { ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 未找到扫描标签 " + tag), false); return 0; }
-        int x1 = IntegerArgumentType.getInteger(ctx, "x1"), y1 = IntegerArgumentType.getInteger(ctx, "y1"), z1 = IntegerArgumentType.getInteger(ctx, "z1");
-        int x2 = IntegerArgumentType.getInteger(ctx, "x2"), y2 = IntegerArgumentType.getInteger(ctx, "y2"), z2 = IntegerArgumentType.getInteger(ctx, "z2");
+        int x1 = IntegerArgumentType.getInteger(ctx, "rx1"), y1 = IntegerArgumentType.getInteger(ctx, "ry1"), z1 = IntegerArgumentType.getInteger(ctx, "rz1");
+        int x2 = IntegerArgumentType.getInteger(ctx, "rx2"), y2 = IntegerArgumentType.getInteger(ctx, "ry2"), z2 = IntegerArgumentType.getInteger(ctx, "rz2");
         boolean removed = entry.ranges.removeIf(r -> r[0]==x1&&r[1]==y1&&r[2]==z1&&r[3]==x2&&r[4]==y2&&r[5]==z2);
         if (removed) EunSearchMod.getInstance().saveConfig();
         ctx.getSource().sendFeedback(() -> Text.literal(removed ? "§a[EunSearch] 已删除寻路范围" : "§c[EunSearch] 未找到匹配的寻路范围"), false);
