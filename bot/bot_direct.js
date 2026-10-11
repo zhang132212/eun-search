@@ -15,13 +15,14 @@ try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch(e) {
 
 const MC = { host: config.host || '127.0.0.1', port: config.port || 25565 };
 const USE_LOCAL = false;
-const VELOCITY_SECRET = 'OPaPuSIeOODU';
+const VELOCITY_SECRET = process.env.VELOCITY_SECRET || config.velocity_secret || '';
 const LS = { 
     email: config.player?.email || 'placeholder@qq.com', 
     pass: config.player?.pass || 'placeholder', 
     player: config.player?.name || 'placeholder'
 };
 const TCP_PORT = parseInt(process.argv[2]) || config.tcp_port || 3002;
+const TCP_TOKEN = process.env.EUNSEARCH_TCP_TOKEN || config.tcp_token || '';
 const IDLE_POS  = (config.idle_pos && config.idle_pos.y) ? { x: config.idle_pos.x, y: config.idle_pos.y, z: config.idle_pos.z } : { x: 0, y: 64, z: 0 };
 const PLACE_POS = config.place_pos ? { x: config.place_pos.x, y: config.place_pos.y, z: config.place_pos.z } : { x: Math.floor(IDLE_POS.x), y: IDLE_POS.y, z: Math.floor(IDLE_POS.z) - 0.5 };
 const DROP_POS  = config.drop_pos ? { x: config.drop_pos.x, y: config.drop_pos.y, z: config.drop_pos.z } : { x: IDLE_POS.x - 7, y: IDLE_POS.y, z: IDLE_POS.z - 4.5 };
@@ -83,9 +84,7 @@ function buildVelocityForwarding(sess) {
     const hmac = crypto.createHmac('sha256', Buffer.from(VELOCITY_SECRET, 'utf8'));
     hmac.update(payload);
     const signature = hmac.digest();
-    console.log('[Bot] HMAC secret:', VELOCITY_SECRET, 'len:', VELOCITY_SECRET.length);
-    console.log('[Bot] Payload (' + payload.length + 'b):', payload.toString('hex'));
-    console.log('[Bot] Signature (32b):', signature.toString('hex'));
+    console.log('[Bot] Velocity forwarding payload signed');
     return Buffer.concat([signature, payload]);
 }
 
@@ -112,9 +111,11 @@ let bot = null;
 let cl = null;
 let pending = null;
 let stopped = false;
+let taskEpoch = 0;
 
 // ==================== STOP & IDLE ====================
 async function stopTask() {
+    taskEpoch++;
     stopped = true; pending = null;
     bot.chat('/msg ' + (bot.username || 'bot') + ' 任务已终止');
     try { await nav(bot, DROP_POS.x + 0.5, DROP_POS.y, DROP_POS.z + 0.5); } catch(e) {}
@@ -149,6 +150,8 @@ function readIncompleteTask() { try { if (fs.existsSync(HB_FILE)) { const hb = J
 // ==================== UTILITIES ====================
 
 function s(ms) { return new Promise(r => setTimeout(r, ms)); }
+function startTask() { stopped = false; return ++taskEpoch; }
+function taskCancelled(epoch) { return stopped || epoch !== taskEpoch; }
 function isShulkerBox(name) { return name && name.includes('shulker_box'); }
 function ts() { return '[' + new Date().toISOString().substring(11, 23) + ']'; }
 function log(...args) { console.log('[LOG]' + ts(), ...args); }
@@ -244,7 +247,8 @@ async function openBlockAt(x, y, z) {
     });
 }
 
-async function processShulkerBox(shulkerInvItem, targetItem, need, user) {
+async function processShulkerBox(shulkerInvItem, targetItem, need, user, epoch) {
+    if (epoch !== undefined && taskCancelled(epoch)) return { taken: 0, cancelled: true };
     let taken = 0;
     let sname = shulkerInvItem.name;
     if (!bot || !bot.inventory) return { taken: 0 };
@@ -252,6 +256,7 @@ async function processShulkerBox(shulkerInvItem, targetItem, need, user) {
     let tgtX = refX, tgtY = refY + 1, tgtZ = refZ;
 
     log('潜影盒处理开始:', sname, '目标:', targetItem, '需要:', need);
+    if (epoch !== undefined && taskCancelled(epoch)) return { taken: 0, cancelled: true };
     let standPlace = findStandPos(bot, refX, refY, refZ);
     if (standPlace) {
         try { await nav(bot, standPlace.x, standPlace.y, standPlace.z); } catch (e) { log('导航到放置点失败:', e.message); }
@@ -259,6 +264,7 @@ async function processShulkerBox(shulkerInvItem, targetItem, need, user) {
         try { await nav(bot, refX + 1.5, refY, refZ + 0.5); } catch (e) {}
     }
 
+    if (epoch !== undefined && taskCancelled(epoch)) return { taken: 0, cancelled: true };
     // 1. Place — use ref position directly (server validates placement)
     let refBlock = bot.blockAt(new Vec3(refX, refY, refZ)) || new Block('stone', new Vec3(refX, refY, refZ));
     await bot.equip(shulkerInvItem, 'hand'); await s(300);
@@ -279,6 +285,7 @@ async function processShulkerBox(shulkerInvItem, targetItem, need, user) {
     }
     log('潜影盒已放置');
 
+    if (epoch !== undefined && taskCancelled(epoch)) return { taken: 0, cancelled: true };
     // 2. Open with fake Block (mineflayer checks constructor.name === 'Block')
     let fakeBlock = new Block('shulker_box', new Vec3(tgtX, tgtY, tgtZ));
     let sch;
@@ -299,6 +306,7 @@ async function processShulkerBox(shulkerInvItem, targetItem, need, user) {
     sch.close(); await s(200);
     log('从潜影盒取出:', taken, '个, 仍需:', need);
 
+    if (epoch !== undefined && taskCancelled(epoch)) { try { sch.close(); } catch (e) {} return { taken, cancelled: true }; }
     // 3. 挖掘 + 等待物品掉落
     let blk = bot.blockAt(new Vec3(tgtX, tgtY, tgtZ)) || fakeBlock;
     setTimeout(() => bot.emit('blockUpdate', fakeBlock, { name: 'air', position: fakeBlock.position, type: 0 }), 2000);
@@ -319,7 +327,8 @@ async function processShulkerBox(shulkerInvItem, targetItem, need, user) {
 
 // ==================== CONTAINER EXECUTION ====================
 
-async function processOneContainer(planEntry, item, usedSlots, user) {
+async function processOneContainer(planEntry, item, usedSlots, user, epoch) {
+    if (epoch !== undefined && taskCancelled(epoch)) return { taken: 0, remaining: planEntry.need_to_take || 0, cancelled: true };
     let { x, y, z, need_to_take, shulkerSlots } = planEntry;
     let remaining = need_to_take;
     let taken = 0;
@@ -503,6 +512,7 @@ async function processOneContainer(planEntry, item, usedSlots, user) {
             log('按槽位取盒:', sortedSlots.map(ss => (typeof ss.slot === 'number') ? ss.slot : ss[0]).join(','), '仍需:', remaining);
 
             for (let i = 0; i < sortedSlots.length && remaining > 0; i++) {
+                if (epoch !== undefined && taskCancelled(epoch)) return { taken, remaining, cancelled: true };
                 let ss = sortedSlots[i];
                 let targetSlot = (typeof ss.slot === 'number') ? ss.slot : ss[0];
                 let slotKey = x + ',' + y + ',' + z + ',' + targetSlot;
@@ -536,7 +546,7 @@ async function processOneContainer(planEntry, item, usedSlots, user) {
                     continue;
                 }
 
-                let result = await processShulkerBox(shInv, item, remaining, user);
+                let result = await processShulkerBox(shInv, item, remaining, user, epoch);
                 remaining -= result.taken; taken += result.taken;
                 log('潜影盒结果:', result.taken, '个, 累计:', taken, '剩余需:', remaining);
 
@@ -636,7 +646,7 @@ function tcpConnect() {
         let timer = setTimeout(() => { tcpClient = null; reject(new Error('timeout')); }, 10000);
         tcpClient = new net.Socket();
         tcpClient.connect(TCP_PORT, MC.host, () => { clearTimeout(timer); console.log('[Bot] TCP connected'); 
-            tcpClient.write(JSON.stringify({ type: 'register', name: LS.player }) + '\n');
+            tcpClient.write(JSON.stringify({ type: 'register', name: LS.player, token: TCP_TOKEN }) + '\n');
             resolve(tcpClient); });
         tcpClient.on('data', (data) => {
             tcpBuffer += data.toString('utf-8');
@@ -675,7 +685,8 @@ async function handleBotCommand(msg) {
         if (pending) { bot.chat('/msg ' + player + ' 正在执行任务'); return; }
         pending = true;
         try { bot.pathfinder.setGoal(null); } catch(e) {}
-        handleFetch(player, tag, item, count, 0, fetchType).catch(e => { log('fetch失败:', e.message); pending = null; });
+        const epoch = startTask();
+        handleFetch(player, tag, item, count, 0, fetchType, epoch).catch(e => { log('fetch失败:', e.message); pending = null; });
     }
 }
 
@@ -696,7 +707,9 @@ async function tryTcpFetch(fetchType, tag, itemId, count) {
 
 // ==================== MAIN FETCH ====================
 
-    async function handleFetch(user, tag, item, totalNeed, resumeGot, fetchType) {
+    async function handleFetch(user, tag, item, totalNeed, resumeGot, fetchType, epoch) {
+        epoch = epoch === undefined ? startTask() : epoch;
+        if (taskCancelled(epoch)) return;
         fetchType = fetchType || 'fetchAll';
         // 清掉任何正在进行的导航，避免并发冲突
         try { bot.pathfinder.setGoal(null); } catch(e) {}
@@ -715,7 +728,7 @@ async function tryTcpFetch(fetchType, tag, itemId, count) {
         if (stillNeed > 0) {
             let ownSh = bot.inventory.items().filter(i => i && isShulkerBox(i.name));
             log('自身潜影盒:', ownSh.length, '个');
-            for (let sh of ownSh) { if (stillNeed <= 0) break; let r = await processShulkerBox(sh, item, stillNeed, user); stillNeed -= r.taken; totalGot += r.taken; }
+            for (let sh of ownSh) { if (stillNeed <= 0) break; if (taskCancelled(epoch)) return; let r = await processShulkerBox(sh, item, stillNeed, user, epoch); stillNeed -= r.taken; totalGot += r.taken; }
         }
     } else {
         stillNeed = totalNeed - resumeGot;
@@ -726,6 +739,7 @@ async function tryTcpFetch(fetchType, tag, itemId, count) {
     }
     hbUpdate('fetching', { user, tag, item, totalNeed, totalGot });
     log('自身总计:', totalGot, '仍需:', stillNeed);
+    if (taskCancelled(epoch)) return;
     if (stillNeed <= 0) { await deliverItems(user, item, totalGot, totalNeed); hbUpdate('idle', null); pending = null; return; }
 
     let containers = [], whTotal = 0, respRanges = [];
@@ -750,9 +764,10 @@ async function tryTcpFetch(fetchType, tag, itemId, count) {
     const MAX_RESCANS = 3;
     let usedSlots = new Set();
     for (let pi = 0; pi < plan.length && stillNeed > 0; pi++) {
+        if (taskCancelled(epoch)) return;
         hbUpdate('fetching', { user, tag, item, totalNeed, totalGot });
         plan[pi].need_to_take = Math.min(stillNeed, plan[pi].count);
-        let r = await processOneContainer(plan[pi], item, usedSlots, user);
+        let r = await processOneContainer(plan[pi], item, usedSlots, user, epoch);
         totalGot += r.taken; stillNeed -= r.taken;
         if (r.rescan && rescanCount < MAX_RESCANS) {
             rescanCount++;
@@ -766,6 +781,7 @@ async function tryTcpFetch(fetchType, tag, itemId, count) {
             } catch (e) { log('重新扫描失败:', e.message); break; }
         }
     }
+    if (taskCancelled(epoch)) return;
     hbUpdate('fetching', { user, tag, item, totalNeed, totalGot });
 
     if (totalGot > 0) await deliverItems(user, item, totalGot, totalNeed);
@@ -929,7 +945,8 @@ async function main() {
             setTimeout(() => {
                 if (!pending) {
                     pending = true;
-                    handleFetch(afUser, afTag, afItem, afCount, 0, "fetchAll").catch(e => { log('自动FETCH失败:', e.message); pending = null; });
+                    const epoch = startTask();
+                    handleFetch(afUser, afTag, afItem, afCount, 0, "fetchAll", epoch).catch(e => { log('自动FETCH失败:', e.message); pending = null; });
                 }
             }, 3000);
         }
@@ -943,7 +960,8 @@ async function main() {
             let tag = fm[1].replace(/^"/, '').replace(/"$/, '');
             let item = fm[2], c = parseInt(fm[3]) || 64;
             pending = true;
-            handleFetch(user, tag, item, c, 0, "fetchAll").catch(e => { console.error('[Bot] fetch err:', e); pending = null; });
+            const epoch = startTask();
+            handleFetch(user, tag, item, c, 0, "fetchAll", epoch).catch(e => { console.error('[Bot] fetch err:', e); pending = null; });
         }
         if (msg.trim() === '!come') {
             let p = bot.players[user];
