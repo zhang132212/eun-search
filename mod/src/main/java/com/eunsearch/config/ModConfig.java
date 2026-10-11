@@ -31,12 +31,15 @@ public class ModConfig {
     }
 
     public void addScan(ScanEntry entry) {
-        scans.removeIf(s -> s.tag.equalsIgnoreCase(entry.tag));
+        if (entry == null || entry.tag == null || entry.tag.isBlank()) return;
+        if (scans == null) scans = new ArrayList<>();
+        scans.removeIf(s -> s != null && s.tag != null && s.tag.equalsIgnoreCase(entry.tag));
         scans.add(entry);
     }
 
     public boolean removeScan(String tag) {
-        return scans.removeIf(s -> s.tag.equalsIgnoreCase(tag));
+        if (tag == null || scans == null) return false;
+        return scans.removeIf(s -> s != null && s.tag != null && s.tag.equalsIgnoreCase(tag));
     }
 
     public static ModConfig load() {
