@@ -433,11 +433,33 @@ public class ScanCommand {
         if (s == null) { ctx.getSource().sendFeedback(() -> Text.literal("§c[EunSearch] 未找到"), false); return 0; }
         try {
             long start = System.currentTimeMillis();
-            var r = RegionScanner.scan(ctx.getSource().getServer(), s.dimension, s.minX(), s.minY(), s.minZ(), s.maxX(), s.maxY(), s.maxZ(), s.getItems());
-            long el = System.currentTimeMillis() - start;
-            StringBuilder sb = new StringBuilder("§a[EunSearch] §e" + tag + "§a (§7" + el + "ms§a)\n容器:" + r.totalContainers + " 格:" + r.totalSlots + "\n");
-            for (var p : r.itemResults) { String sn = p.itemId.contains(":") ? p.itemId.substring(p.itemId.indexOf(':') + 1) : p.itemId; sb.append("§7- §e").append(sn).append("§7: ").append(String.format("%,d", p.totalCount)).append("个 (").append(String.format("%.2f%%", p.percentage)).append(")\n"); }
-            ctx.getSource().sendFeedback(() -> Text.literal(sb.toString()), false);
+            StringBuilder sb;
+            if (s.allItems) {
+                int[] totals = new int[2];
+                var all = RegionScanner.scanAllItems(ctx.getSource().getServer(), s.dimension,
+                        s.minX(), s.minY(), s.minZ(), s.maxX(), s.maxY(), s.maxZ(), totals);
+                sb = new StringBuilder("§a[EunSearch] §e" + tag + "§a (§7"
+                        + (System.currentTimeMillis() - start) + "ms§a)\n容器:" + totals[0]
+                        + " 格:" + totals[1] + "\n");
+                for (var entry : all.entrySet()) {
+                    sb.append("§7- §e").append(entry.getKey()).append("§7: ")
+                            .append(String.format("%,d", entry.getValue()[0])).append("个\n");
+                }
+            } else {
+                var r = RegionScanner.scan(ctx.getSource().getServer(), s.dimension,
+                        s.minX(), s.minY(), s.minZ(), s.maxX(), s.maxY(), s.maxZ(), s.getItems());
+                sb = new StringBuilder("§a[EunSearch] §e" + tag + "§a (§7"
+                        + (System.currentTimeMillis() - start) + "ms§a)\n容器:" + r.totalContainers
+                        + " 格:" + r.totalSlots + "\n");
+                for (var p : r.itemResults) {
+                    String sn = p.itemId.contains(":") ? p.itemId.substring(p.itemId.indexOf(':') + 1) : p.itemId;
+                    sb.append("§7- §e").append(sn).append("§7: ")
+                            .append(String.format("%,d", p.totalCount)).append("个 (")
+                            .append(String.format("%.2f%%", p.percentage)).append(")\n");
+                }
+            }
+            final String feedback = sb.toString();
+            ctx.getSource().sendFeedback(() -> Text.literal(feedback), false);
         } catch (Exception e) { EunSearchMod.LOGGER.error("扫描失败", e); }
         return 1;
     }
